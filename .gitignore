@@ -51,6 +51,7 @@ coverage.html
 /data/
 *.json
 !config.example.json
+!.github/**/*.json
 
 # Log files
 *.log

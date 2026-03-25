@@ -1,0 +1,33 @@
+{
+  "server": {
+    "addr": ":8080",
+    "subnet": "100.64.0.0/10",
+    "data_dir": "./data",
+    "approval_mode": "auto",
+    "tls": {
+      "enabled": false,
+      "self_signed": false,
+      "cert_file": "",
+      "key_file": ""
+    },
+    "rate_limit": 100
+  },
+  "node": {
+    "server_url": "https://your-server:8080",
+    "auth_key": "",
+    "hostname": "",
+    "routes": [],
+    "is_exit_node": false,
+    "use_exit_node": ""
+  },
+  "dns": {
+    "enabled": true,
+    "domain": "karadul.local",
+    "servers": ["100.64.0.1"]
+  },
+  "log": {
+    "level": "info",
+    "format": "text",
+    "file": ""
+  }
+}
