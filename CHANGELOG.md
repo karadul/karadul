@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.1] - 2026-03-26
+
 ### Added
-- **Windows Support** - Full Wintun integration for Windows TUN devices
+- **Windows Support (Beta)** - Wintun integration for Windows TUN devices
   - `internal/tunnel/tun_windows.go` - Windows TUN implementation using Wintun driver
   - `internal/tunnel/wintun_dll_windows.go` - Wintun DLL loading and management
   - `internal/tunnel/wintun_dll_other.go` - Non-Windows stubs
@@ -17,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `internal/firewall/firewall_windows.go` - Windows Firewall netsh integration
   - `internal/firewall/firewall_linux.go` - Linux firewall stubs
   - `internal/firewall/firewall_darwin.go` - macOS firewall stubs
+  - `internal/firewall/firewall_bsd.go` - BSD firewall stubs
   - `karadul firewall` command with `setup`, `remove`, `check`, `allow-port` subcommands
 - **GitHub Actions Workflows**
   - `release.yml` - Automated binary releases for 10+ platforms
@@ -27,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Homebrew Formula** - macOS/Linux Homebrew tap support
   - `contrib/homebrew/karadul.rb.template` - Formula template
   - `contrib/homebrew/update-formula.sh` - Formula update script
+- **Release Infrastructure**
+  - `scripts/release.sh` - Automated release preparation
+  - `contrib/RELEASE_CHECKLIST.md` - Release documentation
 
 ### Changed
 - Updated CI workflow to test all supported platforms (Linux, macOS, Windows, FreeBSD, OpenBSD)
@@ -34,29 +40,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded comparison table to include Windows support
 
 ### Platform Support
-- ✅ Linux (amd64, arm64, armv7)
-- ✅ macOS (amd64, arm64)
-- ✅ Windows (amd64, arm64, x86) - NEW
-- ✅ FreeBSD (amd64) - NEW
-- ✅ OpenBSD (amd64) - NEW
+- ✅ Linux (amd64, arm64, armv7) - Fully Supported
+- ✅ macOS (amd64, arm64) - Fully Supported
+- ⚠️ Windows (amd64, arm64, x86) - Beta (Wintun integration, needs testing)
+- ⚠️ FreeBSD (amd64) - Best Effort (Build OK, TUN stub)
+- ⚠️ OpenBSD (amd64) - Best Effort (Build OK, TUN stub)
 
-### Core Packages
-- `internal/crypto` - Noise protocol implementation, X25519, ChaCha20-Poly1305
-- `internal/tunnel` - TUN device management (Linux, macOS)
-- `internal/nat` - STUN client and hole punching
-- `internal/coordinator` - Coordination server and state management
-- `internal/mesh` - Peer management and topology
-- `internal/relay` - DERP relay server
-- `internal/auth` - Authentication keys and validation
-- `internal/dns` - MagicDNS resolver
+### Known Issues
+- Windows: TUN driver requires manual Wintun DLL installation
+- Windows: Some features may be unstable (beta quality)
+- BSD: TUN implementation is stubbed (returns error)
 
 ## [0.1.0] - TBD
 
 ### Added
-- Initial release
+- Initial stable release
 - Basic mesh networking
 - Coordination server
 - NAT traversal
 
-[Unreleased]: https://github.com/ersinkoc/karadul/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ersinkoc/karadul/compare/v0.1.0-beta.1...HEAD
+[0.1.0-beta.1]: https://github.com/ersinkoc/karadul/releases/tag/v0.1.0-beta.1
 [0.1.0]: https://github.com/ersinkoc/karadul/releases/tag/v0.1.0
