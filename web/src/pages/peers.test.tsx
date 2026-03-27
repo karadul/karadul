@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, within, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { PeersPage } from "./peers"
 import { AllProviders } from "@/test/utils"
@@ -788,8 +788,6 @@ describe("PeersPage - All filter with no peers", () => {
 })
 
 describe("PeersPage - Export with null peers", () => {
-  const user = userEvent.setup()
-
   beforeEach(() => {
     vi.clearAllMocks()
     peersState.peers = null as any
@@ -800,8 +798,6 @@ describe("PeersPage - Export with null peers", () => {
   })
 
   it("should handle export with null peers by using empty array", async () => {
-    const { exportPeersCSV } = await import("@/lib/export")
-
     render(
       <AllProviders>
         <PeersPage />

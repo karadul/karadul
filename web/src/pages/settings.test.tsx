@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { SettingsPage } from "./settings"
 import { AllProviders } from "@/test/utils"
@@ -48,7 +48,7 @@ vi.stubGlobal("navigator", {
 
 // Mock Select component
 vi.mock("@/components/ui/select", () => ({
-  Select: ({ children, value, onValueChange }: { children: React.ReactNode; value?: string; onValueChange?: (v: string) => void }) => (
+  Select: ({ children, value }: { children: React.ReactNode; value?: string }) => (
     <div data-testid="select" data-value={value}>{children}</div>
   ),
   SelectTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
