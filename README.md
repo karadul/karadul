@@ -2,13 +2,13 @@
 
 > **Karadul** — Self-hosted, zero-dependency mesh VPN system written in Go.
 
-[![CI](https://github.com/ersinkoc/karadul/actions/workflows/ci.yml/badge.svg)](https://github.com/ersinkoc/karadul/actions)
-[![Go Version](https://img.shields.io/badge/Go-1.23+-blue.svg)](https://go.dev)
+[![CI](https://github.com/karadul/karadul/actions/workflows/ci.yml/badge.svg)](https://github.com/karadul/karadul/actions)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-blue.svg)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ersinkoc/karadul)](https://goreportcard.com/report/github.com/ersinkoc/karadul)
-[![Release](https://img.shields.io/github/v/release/ersinkoc/karadul?include_prereleases)](https://github.com/ersinkoc/karadul/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/karadul/karadul)](https://goreportcard.com/report/github.com/karadul/karadul)
+[![Release](https://img.shields.io/github/v/release/karadul/karadul?include_prereleases)](https://github.com/karadul/karadul/releases)
 
-> 🧪 **Beta Available:** [v0.1.0-beta.1](https://github.com/ersinkoc/karadul/releases/tag/v0.1.0-beta.1) now with Windows support! [Test it out →](https://github.com/ersinkoc/karadul/releases)
+> 🧪 **Beta Available:** [v0.1.0-beta.1](https://github.com/karadul/karadul/releases/tag/v0.1.0-beta.1) now with Windows support! [Test it out →](https://github.com/karadul/karadul/releases)
 
 ---
 
@@ -35,14 +35,14 @@ Think of it as: **Tailscale + Headscale in one binary, built from scratch.**
 
 #### macOS (Homebrew)
 ```bash
-brew tap ersinkoc/karadul
+brew tap karadul/karadul
 brew install karadul
 ```
 
 #### Linux (Binary)
 ```bash
 # Download latest release
-curl -LO https://github.com/ersinkoc/karadul/releases/latest/download/karadul-linux-amd64
+curl -LO https://github.com/karadul/karadul/releases/latest/download/karadul-linux-amd64
 chmod +x karadul-linux-amd64
 sudo mv karadul-linux-amd64 /usr/local/bin/karadul
 ```
@@ -50,7 +50,7 @@ sudo mv karadul-linux-amd64 /usr/local/bin/karadul
 #### Windows
 ```powershell
 # PowerShell - Download and install
-Invoke-WebRequest -Uri "https://github.com/ersinkoc/karadul/releases/latest/download/karadul-windows-amd64.exe" -OutFile "karadul.exe"
+Invoke-WebRequest -Uri "https://github.com/karadul/karadul/releases/latest/download/karadul-windows-amd64.exe" -OutFile "karadul.exe"
 # Move to PATH (e.g., C:\Windows\System32 or create C:\Tools and add to PATH)
 ```
 
@@ -61,15 +61,15 @@ docker run -d --name karadul \
   --cap-add NET_RAW \
   -p 8080:8080 \
   -p 3478:3478/udp \
-  ghcr.io/ersinkoc/karadul:latest \
+  ghcr.io/karadul/karadul:latest \
   server --addr=:8080
 ```
 
 #### Build from Source
 ```bash
-go install github.com/ersinkoc/karadul/cmd/karadul@latest
+go install github.com/karadul/karadul/cmd/karadul@latest
 # or
-git clone https://github.com/ersinkoc/karadul.git
+git clone https://github.com/karadul/karadul.git
 cd karadul
 go build -o karadul ./cmd/karadul
 ```
@@ -142,6 +142,43 @@ karadul status
 
 ---
 
+## Web UI
+
+Karadul includes a built-in web interface for monitoring and managing your mesh network.
+
+### Features
+- **Dashboard** — System metrics, traffic stats, and network overview
+- **Topology** — Interactive mesh network graph (React Flow)
+- **Nodes** — Node list, search, details panel, and management
+- **Peers** — Peer connections, filtering, and status
+- **Settings** — Auth keys, ACL rules, and general configuration
+- **Real-time** — WebSocket updates for live data
+- **Dark/Light mode** — Theme toggle
+
+### Quick Start
+
+```bash
+# Start the server with web UI enabled
+karadul server --addr=:8080 --web-addr=:8081
+
+# Or build from source with web UI
+make build-with-web
+```
+
+The web UI runs on port 8081 by default and proxies API requests to the coordinator on port 8080.
+
+### Development
+
+```bash
+cd web
+npm install
+npm run dev       # Development server at http://localhost:5173
+npm run test      # Run tests (416 tests, 96%+ coverage)
+npm run build     # Production build
+```
+
+---
+
 ## Architecture
 
 ```
@@ -154,11 +191,16 @@ karadul status
 │  └────┬────┘  └────┬────┘  └────┬────┘  └──────┬───────┘   │
 │       └─────────────┴─────────────┴─────────────┘            │
 │                                                              │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │              Web UI (React + TypeScript)              │    │
+│  │  Dashboard │ Topology │ Nodes │ Peers │ Settings     │    │
+│  └──────────────────────────┬───────────────────────────┘    │
+│                             │                                │
 │                    Core Libraries                            │
-│  ┌─────────┐ ┌─────────┐ ┌──────┐ ┌─────────┐ ┌─────────┐   │
-│  │ crypto  │ │ tunnel  │ │ nat  │ │  mesh   │ │   dns   │   │
-│  │ (noise) │ │  (tun)  │ │(stun)│ │(peers)  │ │(magic)  │   │
-│  └─────────┘ └─────────┘ └──────┘ └─────────┘ └─────────┘   │
+│  ┌─────────┐ ┌─────────┐ ┌──────┐ ┌─────────┐ ┌─────────┐  │
+│  │ crypto  │ │ tunnel  │ │ nat  │ │  mesh   │ │   dns   │  │
+│  │ (noise) │ │  (tun)  │ │(stun)│ │(peers)  │ │(magic)  │  │
+│  └─────────┘ └─────────┘ └──────┘ └─────────┘ └─────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -218,8 +260,8 @@ karadul firewall check        # Check firewall configuration
 
 If you find Karadul useful, please consider:
 
-- ⭐ [Star the repository](https://github.com/ersinkoc/karadul)
-- 🧪 [Test beta releases](https://github.com/ersinkoc/karadul/releases)
+- ⭐ [Star the repository](https://github.com/karadul/karadul)
+- 🧪 [Test beta releases](https://github.com/karadul/karadul/releases)
 - 🐛 [Report bugs](../../issues)
 - 💻 [Contribute code](CONTRIBUTING.md)
 
