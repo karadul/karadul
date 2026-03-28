@@ -99,12 +99,23 @@ export function useTopology() {
 
 export function useStats() {
   const setStats = useKaradulStore((state) => state.setStats)
+  const addTrafficPoint = useKaradulStore((state) => state.addTrafficPoint)
+  const prevStats = useKaradulStore((s) => s.stats)
+  const prevRx = prevStats?.totalRx ?? 0
+  const prevTx = prevStats?.totalTx ?? 0
 
   return useQuery({
     queryKey: queryKeys.stats,
     queryFn: async () => {
       const stats = await fetchApi<SystemStats>("/v1/status")
       setStats(stats)
+      if (prevStats) {
+        const deltaRx = Math.max(0, stats.totalRx - prevRx)
+        const deltaTx = Math.max(0, stats.totalTx - prevTx)
+        addTrafficPoint(deltaRx, deltaTx)
+      } else {
+        addTrafficPoint(stats.totalRx, stats.totalTx)
+      }
       return stats
     },
     refetchInterval: 2000,

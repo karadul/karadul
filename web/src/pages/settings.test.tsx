@@ -28,6 +28,15 @@ vi.mock("@/lib/api", () => ({
     mutateAsync: mockDeleteMutateAsync,
     isPending: false,
   }),
+  useACL: () => ({
+    data: { rules: [] },
+    isLoading: false,
+    error: null,
+  }),
+  useUpdateACL: () => ({
+    mutateAsync: vi.fn().mockResolvedValue(undefined),
+    isPending: false,
+  }),
 }))
 
 // Mock sonner toast
@@ -544,7 +553,7 @@ describe("SettingsPage - Tabs", () => {
     vi.clearAllMocks()
   })
 
-  it("should render ACL tab content with coming soon message", async () => {
+  it("should render ACL tab content with rules management", async () => {
     render(
       <AllProviders>
         <SettingsPage />
@@ -557,8 +566,11 @@ describe("SettingsPage - Tabs", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: /access control rules/i })).toBeInTheDocument()
-      expect(screen.getByText("ACL configuration coming soon")).toBeInTheDocument()
     })
+
+    // Should have Add Rule button in ACL section
+    const addRuleButtons = screen.getAllByRole("button", { name: /add rule/i })
+    expect(addRuleButtons.length).toBeGreaterThanOrEqual(1)
   })
 
   it("should render General tab content", async () => {
@@ -631,6 +643,8 @@ describe("SettingsPage - Loading state", () => {
       useAuthKeys: () => ({ data: null, isLoading: true, error: null, refetch: vi.fn() }),
       useCreateAuthKey: () => ({ mutateAsync: vi.fn(), isPending: false }),
       useDeleteAuthKey: () => ({ mutateAsync: vi.fn(), isPending: false }),
+      useACL: () => ({ data: { rules: [] }, isLoading: false, error: null }),
+      useUpdateACL: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
     }))
     vi.doMock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
     vi.doMock("@/components/ui/select", () => ({
@@ -668,6 +682,8 @@ describe("SettingsPage - Error state", () => {
       }),
       useCreateAuthKey: () => ({ mutateAsync: vi.fn(), isPending: false }),
       useDeleteAuthKey: () => ({ mutateAsync: vi.fn(), isPending: false }),
+      useACL: () => ({ data: { rules: [] }, isLoading: false, error: null }),
+      useUpdateACL: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
     }))
     vi.doMock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
     vi.doMock("@/components/ui/select", () => ({

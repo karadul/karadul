@@ -46,7 +46,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useAuthKeys, useCreateAuthKey, useDeleteAuthKey } from "@/lib/api"
+import { useAuthKeys, useCreateAuthKey, useDeleteAuthKey, useACL, useUpdateACL } from "@/lib/api"
+import type { ACLRule } from "@/lib/api"
 import { formatDate, cn } from "@/lib/utils"
 import { ErrorAlert } from "@/components/error-boundary"
 import { EmptyState } from "@/components/empty-state"
@@ -68,9 +69,45 @@ export function SettingsPage() {
   const { data: authKeys, isLoading, error, refetch } = useAuthKeys()
   const createAuthKey = useCreateAuthKey()
   const deleteAuthKey = useDeleteAuthKey()
+  const { data: aclData, isLoading: aclLoading } = useACL()
+  const updateACL = useUpdateACL()
   const [newKeyExpiresIn, setNewKeyExpiresIn] = useState<string>("")
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [aclRules, setAclRules] = useState<ACLRule[]>([])
+
+  // Sync ACL rules from API data
+  useState(() => {
+    if (aclData?.rules) {
+      setAclRules(aclData.rules)
+    }
+  })
+
+  const handleAddACLRule = () => {
+    setAclRules((prev) => [
+      ...prev,
+      { action: "accept", src: ["*"], dst: ["*"] },
+    ])
+  }
+
+  const updateACLRule = (index: number, field: keyof ACLRule, value: string | string[] | undefined) => {
+    setAclRules((prev) =>
+      prev.map((rule, i) => (i === index ? { ...rule, [field]: value } : rule)),
+    )
+  }
+
+  const removeACLRule = (index: number) => {
+    setAclRules((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleSaveACL = async () => {
+    try {
+      await updateACL.mutateAsync(aclRules)
+      toast.success("ACL rules updated successfully")
+    } catch (err) {
+      toast.error(`Failed to update ACL: ${err instanceof Error ? err.message : "Unknown error"}`)
+    }
+  }
 
   const handleCreateKey = async () => {
     try {
@@ -321,17 +358,130 @@ export function SettingsPage() {
 
         <TabsContent value="acl" className="space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Access Control Rules</CardTitle>
-              <CardDescription>
-                Configure network access control rules
-              </CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Access Control Rules</CardTitle>
+                <CardDescription>
+                  Configure network access control rules
+                </CardDescription>
+              </div>
+              <Button onClick={() => handleAddACLRule()} size="sm">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Rule
+              </Button>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-8 text-muted-foreground">
-                ACL configuration coming soon
-              </div>
+              {aclLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-4">
+                      <Skeleton className="h-10 w-24" />
+                      <Skeleton className="h-10 flex-1" />
+                      <Skeleton className="h-10 flex-1" />
+                      <Skeleton className="h-10 w-24" />
+                      <Skeleton className="h-10 w-10" />
+                    </div>
+                  ))}
+                </div>
+              ) : aclRules.length === 0 ? (
+                <EmptyState
+                  icon={Shield}
+                  title="No ACL rules"
+                  description="Add access control rules to restrict network traffic between nodes."
+                  action={{
+                    label: "Add Rule",
+                    onClick: handleAddACLRule,
+                  }}
+                />
+              ) : (
+                <div className="space-y-3">
+                  {aclRules.map((rule, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center gap-4 p-3 rounded-lg border bg-card"
+                    >
+                      <Select
+                        value={rule.action}
+                        onValueChange={(value) =>
+                          updateACLRule(index, "action", value)
+                        }
+                      >
+                        <SelectTrigger className="w-28">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="accept">Accept</SelectItem>
+                          <SelectItem value="drop">Drop</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <div className="flex-1">
+                        <Label className="text-xs text-muted-foreground">Source</Label>
+                        <Input
+                          value={rule.src.join(", ")}
+                          onChange={(e) =>
+                            updateACLRule(
+                              index,
+                              "src",
+                              e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                            )
+                          }
+                          placeholder="100.64.0.0/10, *"
+                          className="mt-1"
+                        />
+                      </div>
+
+                      <div className="flex-1">
+                        <Label className="text-xs text-muted-foreground">Destination</Label>
+                        <Input
+                          value={rule.dst.join(", ")}
+                          onChange={(e) =>
+                            updateACLRule(
+                              index,
+                              "dst",
+                              e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                            )
+                          }
+                          placeholder="100.64.0.0/10, *"
+                          className="mt-1"
+                        />
+                      </div>
+
+                      <div className="w-28">
+                        <Label className="text-xs text-muted-foreground">Protocol</Label>
+                        <Input
+                          value={rule.proto || ""}
+                          onChange={(e) =>
+                            updateACLRule(index, "proto", e.target.value || undefined)
+                          }
+                          placeholder="tcp, udp"
+                          className="mt-1"
+                        />
+                      </div>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeACLRule(index)}
+                        className="mt-5"
+                      >
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
+            {aclRules.length > 0 && (
+              <div className="px-6 pb-6 flex justify-end">
+                <Button
+                  onClick={handleSaveACL}
+                  disabled={updateACL.isPending}
+                >
+                  {updateACL.isPending ? "Saving..." : "Save Rules"}
+                </Button>
+              </div>
+            )}
           </Card>
         </TabsContent>
 

@@ -26,20 +26,11 @@ import {
   Area,
 } from "recharts"
 
-const mockTrafficData = [
-  { time: "00:00", rx: 1200, tx: 800 },
-  { time: "04:00", rx: 1800, tx: 1200 },
-  { time: "08:00", rx: 2400, tx: 1600 },
-  { time: "12:00", rx: 3200, tx: 2100 },
-  { time: "16:00", rx: 2800, tx: 1900 },
-  { time: "20:00", rx: 3600, tx: 2400 },
-  { time: "23:59", rx: 2100, tx: 1400 },
-]
-
 export function DashboardPage() {
   const { data: stats, isLoading: statsLoading, error: statsError, refetch: refetchStats } = useStats()
   const { data: nodes, isLoading: nodesLoading, error: nodesError, refetch: refetchNodes } = useNodes()
   const { data: peers, isLoading: peersLoading, error: peersError, refetch: refetchPeers } = usePeers()
+  const trafficHistory = useKaradulStore((state) => state.trafficHistory)
   const setIsLoading = useKaradulStore((state) => state.setIsLoading)
 
   useEffect(() => {
@@ -190,7 +181,7 @@ export function DashboardPage() {
               <Skeleton className="h-[200px] w-full" />
             ) : (
               <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={mockTrafficData}>
+                <AreaChart data={trafficHistory}>
                   <defs>
                     <linearGradient id="colorRx" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />

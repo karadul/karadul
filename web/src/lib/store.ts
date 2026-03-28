@@ -66,6 +66,14 @@ export interface AuthKey {
   usedBy?: string
 }
 
+export interface TrafficPoint {
+  time: string
+  rx: number
+  tx: number
+}
+
+const MAX_TRAFFIC_HISTORY = 30
+
 interface KaradulState {
   // Nodes
   nodes: Node[]
@@ -82,6 +90,10 @@ interface KaradulState {
   // Stats
   stats: SystemStats | null
   setStats: (stats: SystemStats) => void
+
+  // Traffic history for real-time chart
+  trafficHistory: TrafficPoint[]
+  addTrafficPoint: (rx: number, tx: number) => void
 
   // Selected node for details
   selectedNode: Node | null
@@ -112,6 +124,24 @@ export const useKaradulStore = create<KaradulState>((set) => ({
 
   stats: null,
   setStats: (stats) => set({ stats }),
+
+  trafficHistory: [],
+  addTrafficPoint: (rx, tx) =>
+    set((state) => {
+      const point: TrafficPoint = {
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        rx,
+        tx,
+      }
+      const history = [...state.trafficHistory, point]
+      if (history.length > MAX_TRAFFIC_HISTORY) {
+        history.splice(0, history.length - MAX_TRAFFIC_HISTORY)
+      }
+      return { trafficHistory: history }
+    }),
 
   selectedNode: null,
   setSelectedNode: (node) => set({ selectedNode: node }),
