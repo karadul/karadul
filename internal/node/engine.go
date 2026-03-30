@@ -108,6 +108,7 @@ type Engine struct {
 
 	// Lifecycle
 	stopCh chan struct{}
+	cancel context.CancelFunc // used by local API /shutdown
 
 	// Buffer pool — reuse large slices for packet I/O
 	bufPool sync.Pool
@@ -139,6 +140,9 @@ func NewEngine(cfg *config.NodeConfig, kp crypto.KeyPair, log *klog.Logger) *Eng
 // Start registers with the coordination server, brings up the TUN device,
 // and begins the packet forwarding loop. Blocks until ctx is cancelled.
 func (e *Engine) Start(ctx context.Context) error {
+	// Wrap ctx so we can cancel from the local API /shutdown endpoint.
+	ctx, e.cancel = context.WithCancel(ctx)
+
 	// Register with coordination server.
 	if err := e.register(ctx); err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -1058,6 +1062,7 @@ func (e *Engine) serveLocalAPI(ctx context.Context) {
 	mux.HandleFunc("/metrics", e.handleAPIMetrics)
 	mux.HandleFunc("/exit-node/enable", e.handleAPIExitNodeEnable)
 	mux.HandleFunc("/exit-node/use", e.handleAPIExitNodeUse)
+	mux.HandleFunc("/shutdown", e.handleAPIShutdown)
 
 	srv := &http.Server{Handler: mux}
 	_ = srv.Serve(ln)
@@ -1171,6 +1176,18 @@ func (e *Engine) handleAPIExitNodeUse(w http.ResponseWriter, r *http.Request) {
 		"status": "ok",
 		"peer":   peer.Hostname,
 	})
+}
+
+func (e *Engine) handleAPIShutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"})
+	if e.cancel != nil {
+		e.cancel()
+	}
 }
 
 // ─── Automatic key rotation ──────────────────────────────────────────────────

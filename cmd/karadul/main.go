@@ -84,6 +84,8 @@ func main() {
 		runKeygen(args)
 	case "up":
 		runUp(args)
+	case "down":
+		runDown(args)
 	case "server":
 		runServer(args)
 	case "relay":
@@ -246,6 +248,21 @@ func runDirectTunnel(cfg *config.NodeConfig, peerEndpoint, remotePubB64 string, 
 	ctx, cancel := signalContext()
 	defer cancel()
 	<-ctx.Done()
+}
+
+// --- down ---
+
+func runDown(args []string) {
+	fs := flag.NewFlagSet("down", flag.ExitOnError)
+	dataDir := fs.String("data-dir", defaultDataDir(), "node data directory")
+	_ = fs.Parse(args)
+
+	_, err := localAPIPost(*dataDir, "/shutdown", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: node not running or socket not found (%v)\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("node shutting down")
 }
 
 // --- server ---
@@ -899,6 +916,7 @@ Usage:
 Commands:
   keygen                Generate a new node key pair
   up                    Start as a mesh node
+  down                  Stop a running mesh node
   server                Start the coordination server
   relay                 Start a DERP relay server
   peers                 List mesh peers
