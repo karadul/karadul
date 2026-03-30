@@ -340,7 +340,7 @@ describe("API Hooks", () => {
     it("should handle update ACL error", async () => {
       const rules = [
         {
-          action: "accept" as const,
+          action: "allow" as const,
           src: ["*"],
           dst: ["*:*"],
         },

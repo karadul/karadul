@@ -53,8 +53,6 @@ export function exportNodesCSV(nodes: Node[]): void {
     "virtualIP",
     "status",
     "endpoint",
-    "os",
-    "version",
     "lastSeen",
     "isExitNode",
     "rxBytes",

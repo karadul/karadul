@@ -236,7 +236,7 @@ func TestRateLimitMiddleware_Disabled(t *testing.T) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	})
-	h := rateLimitMiddleware(inner, 0)
+	h, _ := rateLimitMiddleware(inner, 0)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
@@ -252,7 +252,7 @@ func TestRateLimitMiddleware_AllowsRequests(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := rateLimitMiddleware(inner, 100) // 100 rps — plenty
+	h, _ := rateLimitMiddleware(inner, 100) // 100 rps — plenty
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "10.0.0.1:5000"
@@ -268,7 +268,7 @@ func TestRateLimitMiddleware_Throttles(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := rateLimitMiddleware(inner, 2) // only 2 tokens initially
+	h, _ := rateLimitMiddleware(inner, 2) // only 2 tokens initially
 
 	makeReq := func() int {
 		req := httptest.NewRequest("GET", "/", nil)

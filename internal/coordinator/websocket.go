@@ -17,6 +17,7 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	store      *Store
+	cpuSampler *cpuSampler
 	mu         sync.RWMutex
 	startTime  time.Time
 }
@@ -42,6 +43,7 @@ func NewHub(store *Store) *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		store:      store,
+		cpuSampler: newCPUSampler(5 * time.Second),
 		startTime:  time.Now(),
 	}
 }
@@ -134,7 +136,7 @@ func (h *Hub) sendInitialState(client *Client) {
 	status := SystemStatus{
 		Uptime:         int64(time.Since(h.startTime).Seconds()),
 		MemoryUsage:    int64(memStats.Sys),
-		CPUUsage:       0,
+		CPUUsage:       h.cpuSampler.CPUUsage(),
 		Goroutines:     runtime.NumGoroutine(),
 		PeersConnected: 0,
 		TotalRx:        0,
@@ -193,7 +195,7 @@ func (h *Hub) broadcastUpdate() {
 	status := SystemStatus{
 		Uptime:         int64(time.Since(h.startTime).Seconds()),
 		MemoryUsage:    int64(memStats.Sys),
-		CPUUsage:       0,
+		CPUUsage:       h.cpuSampler.CPUUsage(),
 		Goroutines:     runtime.NumGoroutine(),
 		PeersConnected: 0,
 		TotalRx:        0,

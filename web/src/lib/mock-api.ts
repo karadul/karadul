@@ -143,18 +143,23 @@ const mockAuthKeys: AuthKey[] = [
     id: "key-1",
     key: "kdl_auth_abc123def456ghi789",
     createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-    usedBy: "node-1",
+    ephemeral: true,
+    used: true,
   },
   {
     id: "key-2",
     key: "kdl_auth_jkl012mno345pqr678",
     createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
     expiresAt: new Date(Date.now() + 86400000 * 4).toISOString(),
+    ephemeral: false,
+    used: false,
   },
   {
     id: "key-3",
     key: "kdl_auth_stu901vwx234yz5678",
     createdAt: new Date().toISOString(),
+    ephemeral: false,
+    used: false,
   },
 ]
 
@@ -236,6 +241,8 @@ export const mockApi = {
       expiresAt: expiresIn
         ? new Date(Date.now() + parseDuration(expiresIn)).toISOString()
         : undefined,
+      ephemeral: false,
+      used: false,
     }
     mockAuthKeys.push(newKey)
     return newKey

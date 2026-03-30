@@ -468,13 +468,19 @@ export function SettingsPage() {
                       </div>
 
                       <div className="w-28">
-                        <Label className="text-xs text-muted-foreground">Protocol</Label>
+                        <Label className="text-xs text-muted-foreground">Ports</Label>
                         <Input
-                          value={rule.proto || ""}
+                          value={rule.ports?.join(", ") || ""}
                           onChange={(e) =>
-                            updateACLRule(index, "proto", e.target.value || undefined)
+                            updateACLRule(
+                              index,
+                              "ports",
+                              e.target.value
+                                ? e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
+                                : undefined,
+                            )
                           }
-                          placeholder="tcp, udp"
+                          placeholder="*, 80, 443"
                           className="mt-1"
                         />
                       </div>

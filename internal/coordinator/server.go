@@ -90,7 +90,22 @@ func (s *Server) Start(ctx context.Context, webHandler http.Handler) error {
 	// Start WebSocket hub in background
 	go s.hub.Run()
 
-	handler := rateLimitMiddleware(mux, s.cfg.RateLimit)
+	handler, cleanupBuckets := rateLimitMiddleware(mux, s.cfg.RateLimit)
+
+	// Start stale bucket cleanup
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanupBuckets()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	handler = loggingMiddleware(handler, s.log)
 
 	s.httpSrv = &http.Server{
@@ -192,9 +207,10 @@ func (s *Server) Store() *Store { return s.store }
 // --- Middleware ---
 
 // rateLimitMiddleware is a simple per-IP token bucket rate limiter.
-func rateLimitMiddleware(next http.Handler, rps int) http.Handler {
+// Returns the handler, the buckets map, and a cleanup function.
+func rateLimitMiddleware(next http.Handler, rps int) (http.Handler, func()) {
 	if rps <= 0 {
-		return next
+		return next, func() {}
 	}
 
 	type bucket struct {
@@ -218,7 +234,19 @@ func rateLimitMiddleware(next http.Handler, rps int) http.Handler {
 		b.lastFill = now
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cleanup := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for ip, b := range buckets {
+			b.mu.Lock()
+			if time.Since(b.lastFill) > 5*time.Minute {
+				delete(buckets, ip)
+			}
+			b.mu.Unlock()
+		}
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 
 		mu.Lock()
@@ -242,6 +270,8 @@ func rateLimitMiddleware(next http.Handler, rps int) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+
+	return handler, cleanup
 }
 
 // loggingMiddleware logs every HTTP request.

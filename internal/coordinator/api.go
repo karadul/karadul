@@ -50,6 +50,7 @@ type API struct {
 	approvalMode string // "auto" or "manual"
 	cfg          *config.ServerConfig
 	startTime    time.Time
+	cpuSampler   *cpuSampler
 }
 
 // NewAPI creates an API handler set.
@@ -61,6 +62,7 @@ func NewAPI(store *Store, pool *IPPool, poller *Poller, approvalMode string, cfg
 		approvalMode: approvalMode,
 		cfg:          cfg,
 		startTime:    time.Now(),
+		cpuSampler:   newCPUSampler(5 * time.Second),
 	}
 }
 
@@ -643,7 +645,7 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := SystemStatus{
 		Uptime:         int64(time.Since(a.startTime).Seconds()),
 		MemoryUsage:    int64(memStats.Sys),
-		CPUUsage:       0, // accurate CPU usage requires cgo or external metrics
+		CPUUsage:       a.cpuSampler.CPUUsage(),
 		Goroutines:     runtime.NumGoroutine(),
 		PeersConnected: activeCount,
 		TotalRx:        totalRx,
