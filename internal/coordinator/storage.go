@@ -31,6 +31,8 @@ type Node struct {
 	IsExitNode   bool       `json:"isExitNode,omitempty"`
 	RegisteredAt time.Time  `json:"registeredAt"`
 	LastSeen     time.Time  `json:"lastSeen"`
+	RxBytes      int64      `json:"rxBytes"`
+	TxBytes      int64      `json:"txBytes"`
 }
 
 // AuthKey is a pre-shared key that allows a node to register.

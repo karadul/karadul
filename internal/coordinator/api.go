@@ -38,6 +38,8 @@ type PollRequest struct {
 // UpdateEndpointRequest is the body of POST /api/v1/update-endpoint.
 type UpdateEndpointRequest struct {
 	Endpoint string `json:"endpoint"` // "ip:port"
+	RxBytes  int64  `json:"rxBytes,omitempty"`
+	TxBytes  int64  `json:"txBytes,omitempty"`
 }
 
 // API holds the HTTP handler dependencies.
@@ -230,6 +232,8 @@ func (a *API) handleUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 	_ = a.store.UpdateNode(node.ID, func(n *Node) {
 		n.Endpoint = req.Endpoint
 		n.LastSeen = time.Now()
+		n.RxBytes = req.RxBytes
+		n.TxBytes = req.TxBytes
 	})
 	w.WriteHeader(http.StatusOK)
 }
@@ -283,8 +287,8 @@ func (a *API) handlePeers(w http.ResponseWriter, r *http.Request) {
 			VirtualIP:     n.VirtualIP,
 			State:         state,
 			Endpoint:      n.Endpoint,
-			RxBytes:       0, // not tracked yet
-			TxBytes:       0, // not tracked yet
+			RxBytes:       n.RxBytes,
+			TxBytes:       n.TxBytes,
 			LastHandshake: n.LastSeen.Format(time.RFC3339),
 			PublicKey:     n.PublicKey,
 		})
@@ -629,10 +633,8 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 		if n.Status == NodeStatusActive {
 			activeCount++
 		}
-		// Node does not currently track per-node traffic counters;
-		// when the Node struct gains RxBytes/TxBytes fields they
-		// can be summed here.
-		_ = n
+		totalRx += n.RxBytes
+		totalTx += n.TxBytes
 	}
 
 	var memStats runtime.MemStats

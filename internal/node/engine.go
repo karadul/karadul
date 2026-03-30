@@ -335,8 +335,14 @@ func (e *Engine) discoverEndpoint() (*net.UDPAddr, error) {
 func (e *Engine) reportEndpoint(ctx context.Context, endpoint string) error {
 	type req struct {
 		Endpoint string `json:"endpoint"`
+		RxBytes  int64  `json:"rxBytes"`
+		TxBytes  int64  `json:"txBytes"`
 	}
-	body, _ := json.Marshal(req{Endpoint: endpoint})
+	body, _ := json.Marshal(req{
+		Endpoint: endpoint,
+		RxBytes:  int64(e.metricBytesRx.Load()),
+		TxBytes:  int64(e.metricBytesTx.Load()),
+	})
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		e.serverURL+"/api/v1/update-endpoint", bytes.NewReader(body))
 	if err != nil {

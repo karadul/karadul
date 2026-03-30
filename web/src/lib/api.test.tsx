@@ -292,7 +292,7 @@ describe("API Hooks", () => {
       const mockACL = {
         rules: [
           {
-            action: "accept" as const,
+            action: "allow" as const,
             src: ["*"],
             dst: ["*:*"],
           },
@@ -317,7 +317,7 @@ describe("API Hooks", () => {
     it("should update ACL successfully", async () => {
       const rules = [
         {
-          action: "accept" as const,
+          action: "allow" as const,
           src: ["*"],
           dst: ["*:*"],
         },

@@ -237,8 +237,8 @@ func buildPeersFromNodes(nodes []*Node) []PeerResponse {
 			VirtualIP:     n.VirtualIP,
 			State:         state,
 			Endpoint:      n.Endpoint,
-			RxBytes:       0,
-			TxBytes:       0,
+			RxBytes:       n.RxBytes,
+			TxBytes:       n.TxBytes,
 			LastHandshake: n.LastSeen.Format(time.RFC3339),
 			PublicKey:     n.PublicKey,
 		})
