@@ -31,7 +31,7 @@ func (t *TopologyManager) Apply(state coordinator.NetworkState) {
 	seen := make(map[[32]byte]bool)
 
 	for _, node := range state.Nodes {
-		if node.Status != "active" {
+		if node.Status != coordinator.NodeStatusActive {
 			continue
 		}
 

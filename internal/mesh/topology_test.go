@@ -239,8 +239,8 @@ func TestTopologyManager_Apply_ExpiresRemovedPeers(t *testing.T) {
 	// First apply: two peers.
 	state1 := coordinator.NetworkState{
 		Nodes: []*coordinator.Node{
-			{ID: "n1", PublicKey: encodeKey(peerKey1), Hostname: "p1", VirtualIP: "100.64.0.10", Status: "active"},
-			{ID: "n2", PublicKey: encodeKey(peerKey2), Hostname: "p2", VirtualIP: "100.64.0.11", Status: "active"},
+			{ID: "n1", PublicKey: encodeKey(peerKey1), Hostname: "p1", VirtualIP: "100.64.0.10", Status: "online"},
+			{ID: "n2", PublicKey: encodeKey(peerKey2), Hostname: "p2", VirtualIP: "100.64.0.11", Status: "online"},
 		},
 	}
 	tm.Apply(state1)
@@ -252,7 +252,7 @@ func TestTopologyManager_Apply_ExpiresRemovedPeers(t *testing.T) {
 	// Second apply: only first peer.
 	state2 := coordinator.NetworkState{
 		Nodes: []*coordinator.Node{
-			{ID: "n1", PublicKey: encodeKey(peerKey1), Hostname: "p1", VirtualIP: "100.64.0.10", Status: "active"},
+			{ID: "n1", PublicKey: encodeKey(peerKey1), Hostname: "p1", VirtualIP: "100.64.0.10", Status: "online"},
 		},
 	}
 	tm.Apply(state2)

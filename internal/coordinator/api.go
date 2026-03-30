@@ -236,6 +236,20 @@ func (a *API) handleUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// PeerResponse is the frontend-facing peer representation returned by GET /api/v1/peers.
+type PeerResponse struct {
+	ID            string `json:"id"`
+	Hostname      string `json:"hostname"`
+	VirtualIP     string `json:"virtualIP"`
+	State         string `json:"state"` // Direct, Relayed, Idle, Discovered
+	Endpoint      string `json:"endpoint,omitempty"`
+	Latency       int    `json:"latency,omitempty"` // ms
+	RxBytes       int64  `json:"rxBytes"`
+	TxBytes       int64  `json:"txBytes"`
+	LastHandshake string `json:"lastHandshake,omitempty"`
+	PublicKey     string `json:"publicKey,omitempty"`
+}
+
 // handlePeers handles GET /api/v1/peers.
 func (a *API) handlePeers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -243,14 +257,41 @@ func (a *API) handlePeers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nodes := a.store.ListNodes()
-	// Filter to active nodes only.
-	active := make([]*Node, 0, len(nodes))
+	now := time.Now()
+	recentThreshold := 5 * time.Minute
+
+	peers := make([]PeerResponse, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Status == NodeStatusActive {
-			active = append(active, n)
+		if n.Status != NodeStatusActive {
+			continue
 		}
+
+		// Determine peer connection state.
+		state := "Idle"
+		hasEndpoint := n.Endpoint != ""
+		isRecent := !n.LastSeen.IsZero() && now.Sub(n.LastSeen) < recentThreshold
+
+		if hasEndpoint && isRecent {
+			state = "Direct"
+		} else if isRecent {
+			state = "Relayed"
+		} else if hasEndpoint {
+			state = "Discovered"
+		}
+
+		peers = append(peers, PeerResponse{
+			ID:            n.ID,
+			Hostname:      n.Hostname,
+			VirtualIP:     n.VirtualIP,
+			State:         state,
+			Endpoint:      n.Endpoint,
+			RxBytes:       0, // not tracked yet
+			TxBytes:       0, // not tracked yet
+			LastHandshake: n.LastSeen.Format(time.RFC3339),
+			PublicKey:     n.PublicKey,
+		})
 	}
-	writeJSON(w, active)
+	writeJSON(w, peers)
 }
 
 // handleDERPMap handles GET /api/v1/derp-map.
@@ -259,8 +300,25 @@ func (a *API) handleDERPMap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Return empty DERP map; relay server populates this at startup.
-	writeJSON(w, &DERPMap{Regions: []*DERPRegion{}})
+
+	regions := []*DERPRegion{}
+
+	// If DERP relay is configured, add it as a region.
+	if a.cfg != nil && a.cfg.DERP.Enabled {
+		regions = append(regions, &DERPRegion{
+			RegionID:   1,
+			RegionCode: "default",
+			RegionName: "Default Relay",
+			Nodes: []*DERPNode{{
+				Name:     "default-relay",
+				RegionID: 1,
+				HostName: "127.0.0.1",
+				DERPPort: 3340, // standard DERP STUN port
+			}},
+		})
+	}
+
+	writeJSON(w, &DERPMap{Regions: regions})
 }
 
 // handlePing handles POST /api/v1/ping (keepalive / endpoint exchange).

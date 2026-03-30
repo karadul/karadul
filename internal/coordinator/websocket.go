@@ -90,11 +90,36 @@ func (h *Hub) Run() {
 
 // sendInitialState sends the current state to a newly connected client
 func (h *Hub) sendInitialState(client *Client) {
-	// Send nodes
 	nodes := h.store.ListNodes()
+
+	// Send nodes
 	if msg, err := json.Marshal(map[string]interface{}{
 		"type": "nodes",
 		"data": nodes,
+	}); err == nil {
+		select {
+		case client.send <- msg:
+		default:
+		}
+	}
+
+	// Send peers (active nodes as peer-like objects)
+	peers := buildPeersFromNodes(nodes)
+	if msg, err := json.Marshal(map[string]interface{}{
+		"type": "peers",
+		"data": peers,
+	}); err == nil {
+		select {
+		case client.send <- msg:
+		default:
+		}
+	}
+
+	// Send topology
+	topology := buildTopologyFromNodes(nodes)
+	if msg, err := json.Marshal(map[string]interface{}{
+		"type": "topology",
+		"data": topology,
 	}); err == nil {
 		select {
 		case client.send <- msg:
@@ -143,6 +168,24 @@ func (h *Hub) broadcastUpdate() {
 		h.broadcast <- msg
 	}
 
+	// Broadcast peers
+	peers := buildPeersFromNodes(nodes)
+	if msg, err := json.Marshal(map[string]interface{}{
+		"type": "peers",
+		"data": peers,
+	}); err == nil {
+		h.broadcast <- msg
+	}
+
+	// Broadcast topology
+	topology := buildTopologyFromNodes(nodes)
+	if msg, err := json.Marshal(map[string]interface{}{
+		"type": "topology",
+		"data": topology,
+	}); err == nil {
+		h.broadcast <- msg
+	}
+
 	// Broadcast stats
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
@@ -166,6 +209,85 @@ func (h *Hub) broadcastUpdate() {
 		"data": status,
 	}); err == nil {
 		h.broadcast <- msg
+	}
+}
+
+// buildPeersFromNodes converts active nodes into PeerResponse objects for WebSocket broadcast.
+func buildPeersFromNodes(nodes []*Node) []PeerResponse {
+	now := time.Now()
+	recentThreshold := 5 * time.Minute
+	peers := make([]PeerResponse, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Status != NodeStatusActive {
+			continue
+		}
+		state := "Idle"
+		hasEndpoint := n.Endpoint != ""
+		isRecent := !n.LastSeen.IsZero() && now.Sub(n.LastSeen) < recentThreshold
+		if hasEndpoint && isRecent {
+			state = "Direct"
+		} else if isRecent {
+			state = "Relayed"
+		} else if hasEndpoint {
+			state = "Discovered"
+		}
+		peers = append(peers, PeerResponse{
+			ID:            n.ID,
+			Hostname:      n.Hostname,
+			VirtualIP:     n.VirtualIP,
+			State:         state,
+			Endpoint:      n.Endpoint,
+			RxBytes:       0,
+			TxBytes:       0,
+			LastHandshake: n.LastSeen.Format(time.RFC3339),
+			PublicKey:     n.PublicKey,
+		})
+	}
+	return peers
+}
+
+// buildTopologyFromNodes builds a topology response from node data.
+func buildTopologyFromNodes(nodes []*Node) map[string]interface{} {
+	now := time.Now()
+	recentThreshold := 5 * time.Minute
+
+	type topoNode struct {
+		*Node
+		recent bool
+	}
+	var active []*topoNode
+	for _, n := range nodes {
+		if n.Status != NodeStatusActive {
+			continue
+		}
+		recent := !n.LastSeen.IsZero() && now.Sub(n.LastSeen) < recentThreshold
+		active = append(active, &topoNode{Node: n, recent: recent})
+	}
+
+	var connections []TopologyConnection
+	for i, n1 := range active {
+		if !n1.recent {
+			continue
+		}
+		for j, n2 := range active {
+			if i >= j || !n2.recent {
+				continue
+			}
+			connType := "relay"
+			if n1.Endpoint != "" && n2.Endpoint != "" {
+				connType = "direct"
+			}
+			connections = append(connections, TopologyConnection{
+				From: n1.ID,
+				To:   n2.ID,
+				Type: connType,
+			})
+		}
+	}
+
+	return map[string]interface{}{
+		"nodes":       nodes,
+		"connections": connections,
 	}
 }
 

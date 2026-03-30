@@ -14,23 +14,23 @@ type NodeStatus string
 
 const (
 	NodeStatusPending  NodeStatus = "pending"
-	NodeStatusActive   NodeStatus = "active"
-	NodeStatusDisabled NodeStatus = "disabled"
+	NodeStatusActive   NodeStatus = "online"
+	NodeStatusDisabled NodeStatus = "offline"
 )
 
 // Node represents a registered mesh node.
 type Node struct {
 	ID           string     `json:"id"`
-	PublicKey    string     `json:"public_key"` // base64 X25519 public key
+	PublicKey    string     `json:"publicKey"` // base64 X25519 public key
 	Hostname     string     `json:"hostname"`
-	VirtualIP    string     `json:"virtual_ip"` // e.g. "100.64.0.2"
-	Endpoint     string     `json:"endpoint"`   // last known UDP endpoint "ip:port"
+	VirtualIP    string     `json:"virtualIP"` // e.g. "100.64.0.2"
+	Endpoint     string     `json:"endpoint"`  // last known UDP endpoint "ip:port"
 	Status       NodeStatus `json:"status"`
-	AuthKeyID    string     `json:"auth_key_id,omitempty"`
+	AuthKeyID    string     `json:"authKeyId,omitempty"`
 	Routes       []string   `json:"routes,omitempty"`
-	IsExitNode   bool       `json:"is_exit_node,omitempty"`
-	RegisteredAt time.Time  `json:"registered_at"`
-	LastSeen     time.Time  `json:"last_seen"`
+	IsExitNode   bool       `json:"isExitNode,omitempty"`
+	RegisteredAt time.Time  `json:"registeredAt"`
+	LastSeen     time.Time  `json:"lastSeen"`
 }
 
 // AuthKey is a pre-shared key that allows a node to register.
