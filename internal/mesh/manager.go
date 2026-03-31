@@ -180,6 +180,10 @@ func PeerSummary(p *Peer) string {
 	if p.Endpoint != nil {
 		ep = p.Endpoint.String()
 	}
+	shortID := p.NodeID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
 	return fmt.Sprintf("%s (%s) state=%s vip=%s endpoint=%s",
-		p.Hostname, p.NodeID[:8], p.State.String(), p.VirtualIP, ep)
+		p.Hostname, shortID, p.State.String(), p.VirtualIP, ep)
 }
