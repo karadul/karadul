@@ -313,21 +313,47 @@ func TestParseBindingResponse_Truncated(t *testing.T) {
 	}
 }
 
-// TestParseXORMappedAddress_IPv6NotImpl verifies that the default (IPv6) family
-// returns the "not implemented" error.
-func TestParseXORMappedAddress_IPv6NotImpl(t *testing.T) {
+// TestParseXORMappedAddress_IPv6 verifies IPv6 XOR-MAPPED-ADDRESS decoding.
+func TestParseXORMappedAddress_IPv6(t *testing.T) {
+	// Build a 20-byte IPv6 XOR-MAPPED-ADDRESS attribute.
+	txID := make([]byte, 12)
+	for i := range txID {
+		txID[i] = byte(i)
+	}
+
+	// Expected IP = 2001:db8::1
+	expectedIP := net.ParseIP("2001:db8::1").To16()
+	// XOR key: magic cookie (4 bytes) + txID (12 bytes)
+	xorKey := make([]byte, 16)
+	binary.BigEndian.PutUint32(xorKey[0:], stunMagicCookie)
+	copy(xorKey[4:], txID)
+
 	b := make([]byte, 20)
-	b[1] = stunAddrFamilyIPv6 // 0x02 — triggers default branch
-	binary.BigEndian.PutUint16(b[2:], 1234)
-	if _, err := parseXORMappedAddress(b); err == nil {
-		t.Fatal("expected error for IPv6 xor mapped address (not implemented)")
+	b[1] = stunAddrFamilyIPv6
+	// XOR port with high 16 bits of magic cookie.
+	xorPort := uint16(12345) ^ uint16(stunMagicCookie>>16)
+	binary.BigEndian.PutUint16(b[2:], xorPort)
+	// XOR IP with xorKey.
+	for i := 0; i < 16; i++ {
+		b[4+i] = expectedIP[i] ^ xorKey[i]
+	}
+
+	addr, err := parseXORMappedAddress(b, txID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !addr.IP.Equal(expectedIP) {
+		t.Errorf("IP mismatch: got %s, want %s", addr.IP, expectedIP)
+	}
+	if addr.Port != 12345 {
+		t.Errorf("port mismatch: got %d, want 12345", addr.Port)
 	}
 }
 
 // TestParseXORMappedAddress_TooShort verifies parseXORMappedAddress returns
 // error when the buffer is too small.
 func TestParseXORMappedAddress_TooShort(t *testing.T) {
-	if _, err := parseXORMappedAddress([]byte{0x00, stunAddrFamilyIPv4, 0x10}); err == nil {
+	if _, err := parseXORMappedAddress([]byte{0x00, stunAddrFamilyIPv4, 0x10}, nil); err == nil {
 		t.Fatal("expected error for too-short XOR mapped address buffer")
 	}
 }

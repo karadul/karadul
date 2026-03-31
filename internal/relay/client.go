@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	klog "github.com/karadul/karadul/internal/log"
@@ -20,7 +21,8 @@ const (
 )
 
 // testBackoff is used by tests to override backoff behavior. If non-nil, it's called instead of time.After.
-var testBackoff func(time.Duration) <-chan time.Time
+// Access is synchronized via atomic.Pointer to avoid races with test cleanup.
+var testBackoff atomic.Pointer[func(time.Duration) <-chan time.Time]
 
 // RecvFunc is called when a packet is received from the relay.
 type RecvFunc func(src [32]byte, payload []byte)
@@ -70,8 +72,8 @@ func (c *Client) Run(ctx context.Context) {
 				"err", err, "backoff", backoff.String())
 			select {
 			case <-func() <-chan time.Time {
-				if testBackoff != nil {
-					return testBackoff(backoff)
+				if fn := testBackoff.Load(); fn != nil {
+					return (*fn)(backoff)
 				}
 				return time.After(backoff)
 			}():

@@ -55,7 +55,7 @@ func NewServer(cfg *config.ServerConfig, log *klog.Logger) (*Server, error) {
 
 	poller := NewPoller(store)
 	api := NewAPI(store, pool, poller, cfg.ApprovalMode, cfg)
-	hub := NewHub(store, cfg.AllowedOrigins)
+	hub := NewHub(store, cfg.AllowedOrigins, cfg.AdminSecret)
 
 	// Wire up DERPMap builder so poll responses include relay info.
 	poller.SetDERPMapFn(api.buildDERPMap)
@@ -109,6 +109,9 @@ func (s *Server) Start(ctx context.Context, webHandler http.Handler) error {
 		}
 	}()
 
+	// Start store garbage collection for stale nodes and expired keys.
+	s.store.StartGC()
+
 	handler = loggingMiddleware(handler, s.log)
 
 	s.httpSrv = &http.Server{
@@ -151,12 +154,14 @@ func (s *Server) Start(ctx context.Context, webHandler http.Handler) error {
 	case <-ctx.Done():
 		s.api.Close()
 		s.hub.Close()
+		s.store.StopGC()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return s.httpSrv.Shutdown(shutCtx)
 	case err := <-errCh:
 		s.api.Close()
 		s.hub.Close()
+		s.store.StopGC()
 		return err
 	}
 }

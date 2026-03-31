@@ -84,6 +84,10 @@ type Store struct {
 
 	subscribers []chan struct{}
 	subMu       sync.Mutex
+
+	// GC state
+	gcDone chan struct{}
+	gcStop chan struct{}
 }
 
 // NewStore creates a Store backed by path.
@@ -373,4 +377,96 @@ func (s *Store) UpdatedAt() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.state.UpdatedAt
+}
+
+// --- Garbage collection ---
+
+const (
+	gcInterval      = 5 * time.Minute
+	gcNodeStaleAge  = 30 * time.Minute  // mark offline after 30 min inactivity
+	gcNodeExpireAge = 24 * time.Hour    // delete offline nodes after 24 h
+	gcKeyExpireAge  = 24 * time.Hour    // delete expired/used keys after 24 h
+)
+
+// StartGC begins the background garbage-collection loop.
+func (s *Store) StartGC() {
+	s.gcDone = make(chan struct{})
+	s.gcStop = make(chan struct{})
+	go s.gcLoop()
+}
+
+// StopGC stops the background GC loop and waits for it to finish.
+func (s *Store) StopGC() {
+	if s.gcStop == nil {
+		return
+	}
+	close(s.gcStop)
+	<-s.gcDone
+}
+
+func (s *Store) gcLoop() {
+	defer close(s.gcDone)
+	ticker := time.NewTicker(gcInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.runGC()
+		case <-s.gcStop:
+			return
+		}
+	}
+}
+
+func (s *Store) runGC() {
+	now := time.Now()
+	dirty := false
+
+	s.mu.Lock()
+	defer func() {
+		if dirty {
+			s.state.UpdatedAt = now
+			s.version++
+			s.notify()
+			_ = s.saveLocked()
+		}
+		s.mu.Unlock()
+	}()
+
+	// Phase 1: mark stale nodes offline.
+	for _, n := range s.state.Nodes {
+		if n.Status == NodeStatusActive && !n.LastSeen.IsZero() && now.Sub(n.LastSeen) > gcNodeStaleAge {
+			n.Status = NodeStatusDisabled
+			dirty = true
+		}
+	}
+
+	// Phase 2: delete long-offline nodes.
+	kept := s.state.Nodes[:0]
+	for _, n := range s.state.Nodes {
+		if n.Status == NodeStatusDisabled && !n.LastSeen.IsZero() && now.Sub(n.LastSeen) > gcNodeExpireAge {
+			continue // drop
+		}
+		kept = append(kept, n)
+	}
+	if len(kept) != len(s.state.Nodes) {
+		s.state.Nodes = kept
+		dirty = true
+	}
+
+	// Phase 3: prune expired/used auth keys.
+	keys := s.state.AuthKeys[:0]
+	for _, k := range s.state.AuthKeys {
+		if k.Ephemeral && k.Used && !k.UsedAt.IsZero() && now.Sub(k.UsedAt) > gcKeyExpireAge {
+			continue // drop used ephemeral keys
+		}
+		if !k.ExpiresAt.IsZero() && now.After(k.ExpiresAt) && now.Sub(k.ExpiresAt) > gcKeyExpireAge {
+			continue // drop long-expired keys
+		}
+		keys = append(keys, k)
+	}
+	if len(keys) != len(s.state.AuthKeys) {
+		s.state.AuthKeys = keys
+		dirty = true
+	}
 }

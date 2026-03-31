@@ -84,11 +84,15 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/poll", a.handlePoll)
 	mux.HandleFunc("/api/v1/update-endpoint", a.handleUpdateEndpoint)
 	mux.HandleFunc("/api/v1/exchange-endpoint", a.handleExchangeEndpoint)
-	mux.HandleFunc("/api/v1/peers", a.handlePeers)
-	mux.HandleFunc("/api/v1/derp-map", a.handleDERPMap)
 	mux.HandleFunc("/api/v1/ping", a.handlePing)
-	mux.HandleFunc("/api/v1/topology", a.handleTopology)
-	mux.HandleFunc("/api/v1/status", a.handleStatus)
+
+	// Protected GET endpoints — require node HMAC signature or admin Bearer token
+	// when admin_secret is configured. If no secret is set, access is open.
+	protectedAuth := a.nodeOrAdminAuth()
+	mux.Handle("/api/v1/peers", protectedAuth(http.HandlerFunc(a.handlePeers)))
+	mux.Handle("/api/v1/derp-map", protectedAuth(http.HandlerFunc(a.handleDERPMap)))
+	mux.Handle("/api/v1/topology", protectedAuth(http.HandlerFunc(a.handleTopology)))
+	mux.Handle("/api/v1/status", protectedAuth(http.HandlerFunc(a.handleStatus)))
 
 	// Admin routes protected by bearer token when admin_secret is configured.
 	adminAuth := a.adminAuth()
@@ -125,6 +129,40 @@ func (a *API) adminAuth() func(http.Handler) http.Handler {
 				return
 			}
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// nodeOrAdminAuth returns middleware that requires either a valid node HMAC
+// signature (X-Karadul-Key + X-Karadul-Sig) or an admin Bearer token.
+// If no admin_secret is configured, it is a no-op (backward compatible).
+func (a *API) nodeOrAdminAuth() func(http.Handler) http.Handler {
+	secret := ""
+	if a.cfg != nil {
+		secret = a.cfg.AdminSecret
+	}
+	return func(next http.Handler) http.Handler {
+		if secret == "" {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Try admin Bearer token.
+			auth := r.Header.Get("Authorization")
+			if strings.HasPrefix(auth, "Bearer ") {
+				token := strings.TrimPrefix(auth, "Bearer ")
+				if subtle.ConstantTimeCompare([]byte(token), []byte(secret)) == 1 {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			// Try node HMAC signature.
+			if r.Header.Get(headerKey) != "" && r.Header.Get(headerSig) != "" {
+				if err := VerifyRequestSignature(a.store, r, nil); err == nil {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 		})
 	}
 }

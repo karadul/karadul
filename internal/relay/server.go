@@ -26,6 +26,11 @@ type Server struct {
 	mu      sync.RWMutex
 	clients map[[32]byte]*serverClient
 	log     *klog.Logger
+
+	// VerifyFunc, when non-nil, is called to verify that the connecting
+	// client's public key is registered. If it returns false the connection
+	// is rejected.
+	VerifyFunc func(pubKey [32]byte) bool
 }
 
 type serverMsg struct {
@@ -100,6 +105,12 @@ func (s *Server) handleClient(conn net.Conn, rw *bufio.ReadWriter) {
 
 	var pubKey [32]byte
 	copy(pubKey[:], frame.Payload[:32])
+
+	// Verify client public key when VerifyFunc is configured.
+	if s.VerifyFunc != nil && !s.VerifyFunc(pubKey) {
+		s.log.Debug("derp: unregistered public key rejected", "key", fmt.Sprintf("%x", pubKey[:4]))
+		return
+	}
 
 	// Enforce max client limit.
 	s.mu.RLock()

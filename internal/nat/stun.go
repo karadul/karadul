@@ -36,7 +36,7 @@ type BindingResult struct {
 // BindingRequest sends a STUN Binding Request to serverAddr and returns the
 // public endpoint (XOR-MAPPED-ADDRESS or MAPPED-ADDRESS).
 func BindingRequest(conn *net.UDPConn, serverAddr string) (*BindingResult, error) {
-	srv, err := net.ResolveUDPAddr("udp4", serverAddr)
+	srv, err := net.ResolveUDPAddr("udp", serverAddr)
 	if err != nil {
 		return nil, fmt.Errorf("resolve stun server %s: %w", serverAddr, err)
 	}
@@ -126,7 +126,7 @@ func parseBindingResponse(buf, txID []byte) (*net.UDPAddr, error) {
 				mappedAddr = addr
 			}
 		case stunAttrXORMappedAddress:
-			addr, err := parseXORMappedAddress(attrData)
+			addr, err := parseXORMappedAddress(attrData, txID)
 			if err == nil {
 				xorMappedAddr = addr
 			}
@@ -170,8 +170,9 @@ func parseMappedAddress(b []byte) (*net.UDPAddr, error) {
 }
 
 // parseXORMappedAddress parses a STUN XOR-MAPPED-ADDRESS attribute.
-func parseXORMappedAddress(b []byte) (*net.UDPAddr, error) {
-	if len(b) < 8 {
+// txID is the 12-byte transaction ID from the request, needed for IPv6 XOR decoding.
+func parseXORMappedAddress(b, txID []byte) (*net.UDPAddr, error) {
+	if len(b) < 4 {
 		return nil, fmt.Errorf("xor mapped address too short")
 	}
 	family := b[1]
@@ -190,7 +191,23 @@ func parseXORMappedAddress(b []byte) (*net.UDPAddr, error) {
 			xorIP[i] = b[4+i] ^ magicBytes[i]
 		}
 		return &net.UDPAddr{IP: net.IP(xorIP), Port: port}, nil
+	case stunAddrFamilyIPv6:
+		if len(b) < 20 {
+			return nil, fmt.Errorf("xor ipv6 too short")
+		}
+		if len(txID) < 12 {
+			return nil, fmt.Errorf("xor ipv6: txID too short")
+		}
+		// RFC 5389 §15.2: XOR the IP with magic cookie (4 bytes) + transaction ID (12 bytes).
+		xorIP := make([]byte, 16)
+		xorKey := make([]byte, 16)
+		binary.BigEndian.PutUint32(xorKey[0:], stunMagicCookie)
+		copy(xorKey[4:], txID)
+		for i := 0; i < 16; i++ {
+			xorIP[i] = b[4+i] ^ xorKey[i]
+		}
+		return &net.UDPAddr{IP: net.IP(xorIP), Port: port}, nil
 	default:
-		return nil, fmt.Errorf("xor ipv6 not implemented")
+		return nil, fmt.Errorf("unknown address family %d in xor mapped address", family)
 	}
 }

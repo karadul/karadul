@@ -93,14 +93,15 @@ func TestConnect_HTTPErrorStatus(t *testing.T) {
 func TestRun_ReconnectBackoff(t *testing.T) {
 	// Override testBackoff to capture backoff values.
 	backoffCh := make(chan time.Duration, 20)
-	testBackoff = func(d time.Duration) <-chan time.Time {
+	fn := func(d time.Duration) <-chan time.Time {
 		select {
 		case backoffCh <- d:
 		default:
 		}
 		return time.After(1 * time.Millisecond) // Fast for tests
 	}
-	defer func() { testBackoff = nil }()
+	testBackoff.Store(&fn)
+	defer testBackoff.Store(nil)
 
 	log := klog.New(nil, klog.LevelError, klog.FormatText)
 	var pubKey [32]byte
@@ -148,14 +149,15 @@ collect:
 // TestRun_MaxBackoff verifies that backoff caps at backoffMax (30s).
 func TestRun_MaxBackoff(t *testing.T) {
 	backoffCh := make(chan time.Duration, 30)
-	testBackoff = func(d time.Duration) <-chan time.Time {
+	fn := func(d time.Duration) <-chan time.Time {
 		select {
 		case backoffCh <- d:
 		default:
 		}
 		return time.After(1 * time.Millisecond)
 	}
-	defer func() { testBackoff = nil }()
+	testBackoff.Store(&fn)
+	defer testBackoff.Store(nil)
 
 	log := klog.New(nil, klog.LevelError, klog.FormatText)
 	var pubKey [32]byte

@@ -1,10 +1,12 @@
 package coordinator
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +26,10 @@ type Hub struct {
 	// allowedOrigins controls which origins may connect via WebSocket.
 	// An empty slice restricts to same-origin only (Host header matches Origin).
 	allowedOrigins []string
+
+	// adminSecret, when non-empty, requires WebSocket clients to present a
+	// valid Bearer token (via query param "token" or Authorization header).
+	adminSecret string
 
 	mu        sync.RWMutex
 	startTime time.Time
@@ -45,7 +51,8 @@ var upgrader = websocket.Upgrader{
 // NewHub creates a new WebSocket hub.
 // allowedOrigins controls which origins may connect via WebSocket;
 // an empty slice restricts to same-origin only.
-func NewHub(store *Store, allowedOrigins []string) *Hub {
+// adminSecret, when non-empty, requires authentication for WebSocket connections.
+func NewHub(store *Store, allowedOrigins []string, adminSecret string) *Hub {
 	return &Hub{
 		clients:        make(map[*Client]bool),
 		broadcast:      make(chan []byte, 64),
@@ -55,6 +62,7 @@ func NewHub(store *Store, allowedOrigins []string) *Hub {
 		store:          store,
 		cpuSampler:     newCPUSampler(5 * time.Second),
 		allowedOrigins: allowedOrigins,
+		adminSecret:    adminSecret,
 		startTime:      time.Now(),
 	}
 }
@@ -380,6 +388,23 @@ func (h *Hub) checkOrigin(r *http.Request) bool {
 
 // ServeWS handles WebSocket connections
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	// Auth check: when adminSecret is configured, require a valid token.
+	if h.adminSecret != "" {
+		token := ""
+		// Check Authorization header first.
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token = strings.TrimPrefix(auth, "Bearer ")
+		}
+		// Fall back to query parameter.
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(h.adminSecret)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	if !h.checkOrigin(r) {
 		http.Error(w, "origin not allowed", http.StatusForbidden)
 		return
