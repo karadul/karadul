@@ -17,6 +17,7 @@ type Hub struct {
 	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
+	done       chan struct{}
 	store      *Store
 	cpuSampler *cpuSampler
 
@@ -50,6 +51,7 @@ func NewHub(store *Store, allowedOrigins []string) *Hub {
 		broadcast:      make(chan []byte),
 		register:       make(chan *Client),
 		unregister:     make(chan *Client),
+		done:           make(chan struct{}),
 		store:          store,
 		cpuSampler:     newCPUSampler(5 * time.Second),
 		allowedOrigins: allowedOrigins,
@@ -57,13 +59,34 @@ func NewHub(store *Store, allowedOrigins []string) *Hub {
 	}
 }
 
-// Run starts the hub's event loop
+// Close shuts down the hub gracefully, stopping the event loop and cpuSampler.
+func (h *Hub) Close() {
+	select {
+	case <-h.done:
+		return // already closed
+	default:
+	}
+	close(h.done)
+	h.cpuSampler.Stop()
+}
+
+// Run starts the hub's event loop. It blocks until Close() is called.
 func (h *Hub) Run() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-h.done:
+			// Drain remaining clients on shutdown.
+			h.mu.Lock()
+			for client := range h.clients {
+				close(client.send)
+				delete(h.clients, client)
+			}
+			h.mu.Unlock()
+			return
+
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
@@ -81,16 +104,27 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 
 		case message := <-h.broadcast:
+			var toClose []*Client
 			h.mu.RLock()
 			for client := range h.clients {
 				select {
 				case client.send <- message:
 				default:
-					close(client.send)
-					delete(h.clients, client)
+					toClose = append(toClose, client)
 				}
 			}
 			h.mu.RUnlock()
+			// Close slow clients outside the read lock to avoid double-close races.
+			if len(toClose) > 0 {
+				h.mu.Lock()
+				for _, client := range toClose {
+					if _, ok := h.clients[client]; ok {
+						close(client.send)
+						delete(h.clients, client)
+					}
+				}
+				h.mu.Unlock()
+			}
 
 		case <-ticker.C:
 			// Broadcast periodic updates
@@ -349,17 +383,24 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		conn: conn,
 		send: make(chan []byte, 256),
 	}
-	client.hub.register <- client
 
-	// Start goroutines for reading and writing
-	go client.writePump()
-	go client.readPump()
+	// Try to register; if the hub is shutting down, close immediately.
+	select {
+	case h.register <- client:
+		go client.writePump()
+		go client.readPump()
+	case <-h.done:
+		conn.Close()
+	}
 }
 
 // readPump pumps messages from the WebSocket connection to the hub
 func (c *Client) readPump() {
 	defer func() {
-		c.hub.unregister <- c
+		select {
+		case c.hub.unregister <- c:
+		case <-c.hub.done:
+		}
 		c.conn.Close()
 	}()
 

@@ -57,6 +57,9 @@ func NewServer(cfg *config.ServerConfig, log *klog.Logger) (*Server, error) {
 	api := NewAPI(store, pool, poller, cfg.ApprovalMode, cfg)
 	hub := NewHub(store, cfg.AllowedOrigins)
 
+	// Wire up DERPMap builder so poll responses include relay info.
+	poller.SetDERPMapFn(api.buildDERPMap)
+
 	return &Server{
 		cfg:    cfg,
 		store:  store,
@@ -143,10 +146,12 @@ func (s *Server) Start(ctx context.Context, webHandler http.Handler) error {
 
 	select {
 	case <-ctx.Done():
+		s.hub.Close()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return s.httpSrv.Shutdown(shutCtx)
 	case err := <-errCh:
+		s.hub.Close()
 		return err
 	}
 }

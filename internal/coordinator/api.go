@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -332,24 +334,39 @@ func (a *API) handleDERPMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeJSON(w, a.buildDERPMap())
+}
+
+// buildDERPMap constructs the DERPMap from the current configuration.
+func (a *API) buildDERPMap() *DERPMap {
 	regions := []*DERPRegion{}
 
-	// If DERP relay is configured, add it as a region.
-	if a.cfg != nil && a.cfg.DERP.Enabled {
-		regions = append(regions, &DERPRegion{
-			RegionID:   1,
-			RegionCode: "default",
-			RegionName: "Default Relay",
-			Nodes: []*DERPNode{{
-				Name:     "default-relay",
-				RegionID: 1,
-				HostName: "127.0.0.1",
-				DERPPort: 3340, // standard DERP STUN port
-			}},
-		})
+	if a.cfg == nil || !a.cfg.DERP.Enabled {
+		return &DERPMap{Regions: regions}
 	}
 
-	writeJSON(w, &DERPMap{Regions: regions})
+	// Determine DERP address from config, falling back to the coordinator address.
+	derpAddr := a.cfg.DERP.Addr
+	if derpAddr == "" {
+		derpAddr = a.cfg.Addr
+	}
+
+	// Extract the host and port.
+	host, port := parseDERPAddr(derpAddr)
+
+	regions = append(regions, &DERPRegion{
+		RegionID:   1,
+		RegionCode: "default",
+		RegionName: "Default Relay",
+		Nodes: []*DERPNode{{
+			Name:     "default-relay",
+			RegionID: 1,
+			HostName: host,
+			DERPPort: port,
+		}},
+	})
+
+	return &DERPMap{Regions: regions}
 }
 
 // handlePing handles POST /api/v1/ping (keepalive / endpoint exchange).
@@ -563,6 +580,26 @@ func generateID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// parseDERPAddr splits an address (e.g. ":8080" or "127.0.0.1:3340") into host and port.
+// If the host is empty (e.g. ":8080"), it defaults to "127.0.0.1".
+func parseDERPAddr(addr string) (host string, port int) {
+	host = "127.0.0.1"
+	port = 443
+
+	h, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return
+	}
+	if h != "" {
+		host = h
+	}
+	port, _ = strconv.Atoi(p)
+	if port == 0 {
+		port = 443
+	}
+	return
 }
 
 // TopologyConnection represents a connection between two nodes in the mesh

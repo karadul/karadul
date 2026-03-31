@@ -86,16 +86,32 @@ func DefaultServerConfig() *ServerConfig {
 }
 
 // LoadServerConfig reads a JSON config file and merges it over defaults.
+// The file may be either:
+//   - flat: {"addr": ":8080", "subnet": "100.64.0.0/10", ...}
+//   - nested: {"server": {"addr": ":8080", ...}, "node": {...}}
+//
+// When nested, only the "server" key is used; the "node" key is ignored.
 func LoadServerConfig(path string) (*ServerConfig, error) {
 	cfg := DefaultServerConfig()
 
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open server config %s: %w", path, err)
+		return nil, fmt.Errorf("read server config %s: %w", path, err)
 	}
-	defer f.Close()
 
-	if err := json.NewDecoder(f).Decode(cfg); err != nil {
+	// Try nested format first: {"server": {...}}
+	var wrapper struct {
+		Server json.RawMessage `json:"server"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err == nil && len(wrapper.Server) > 0 {
+		if err := json.Unmarshal(wrapper.Server, cfg); err != nil {
+			return nil, fmt.Errorf("parse server config %s: %w", path, err)
+		}
+		return cfg, nil
+	}
+
+	// Fall back to flat format.
+	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse server config %s: %w", path, err)
 	}
 	return cfg, nil

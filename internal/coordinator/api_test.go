@@ -1268,6 +1268,65 @@ func TestRegister_ReRegistration(t *testing.T) {
 	}
 }
 
+// TestRegister_ManualMode_ReRegisterPreservesActive verifies that in manual approval
+// mode, a node that was approved and then re-registers keeps its active status.
+func TestRegister_ManualMode_ReRegisterPreservesActive(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(filepath.Join(dir, "state.json"))
+	pool, _ := NewIPPool("100.64.0.0/10")
+	poller := NewPoller(store)
+	api := NewAPI(store, pool, poller, "manual", nil)
+
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	// Register — should be pending.
+	ak, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak)
+	body, _ := json.Marshal(RegisterRequest{
+		PublicKey: testPubKeyB64,
+		Hostname:  "manual-node",
+		AuthKey:   ak.Key,
+	})
+	resp, _ := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+	node, _ := store.GetNodeByPubKey(testPubKeyB64)
+	if node.Status != NodeStatusPending {
+		t.Fatalf("initial: want pending, got %q", node.Status)
+	}
+
+	// Approve.
+	approveReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/nodes/"+node.ID+"/approve", nil)
+	approveResp, _ := http.DefaultClient.Do(approveReq)
+	approveResp.Body.Close()
+	node2, _ := store.GetNodeByPubKey(testPubKeyB64)
+	if node2.Status != NodeStatusActive {
+		t.Fatalf("after approve: want active, got %q", node2.Status)
+	}
+
+	// Re-register with same pubkey.
+	ak2, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak2)
+	body2, _ := json.Marshal(RegisterRequest{
+		PublicKey: testPubKeyB64,
+		Hostname:  "manual-node-updated",
+		AuthKey:   ak2.Key,
+	})
+	resp2, _ := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(body2))
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("re-register: want 200, got %d", resp2.StatusCode)
+	}
+
+	// Status should still be active (not reverted to pending).
+	node3, _ := store.GetNodeByPubKey(testPubKeyB64)
+	if node3.Status != NodeStatusActive {
+		t.Fatalf("after re-register: want active, got %q", node3.Status)
+	}
+}
+
 // TestAdminNodes_MethodNotAllowed verifies PUT to /admin/nodes/ returns 405.
 func TestAdminNodes_MethodNotAllowed(t *testing.T) {
 	_, ts := newTestAPI(t)

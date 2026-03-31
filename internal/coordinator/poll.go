@@ -44,12 +44,18 @@ type DERPNode struct {
 
 // Poller manages long-poll subscriptions.
 type Poller struct {
-	store *Store
+	store   *Store
+	derpMap func() *DERPMap // returns the current DERP map; may be nil
 }
 
 // NewPoller creates a Poller backed by store.
 func NewPoller(store *Store) *Poller {
 	return &Poller{store: store}
+}
+
+// SetDERPMapFn sets the function used to produce a DERPMap for poll responses.
+func (p *Poller) SetDERPMapFn(fn func() *DERPMap) {
+	p.derpMap = fn
 }
 
 // WaitForUpdate blocks until the state version exceeds sinceVersion or ctx is cancelled.
@@ -80,10 +86,14 @@ func (p *Poller) WaitForUpdate(ctx context.Context, sinceVersion int64) NetworkS
 func (p *Poller) snapshot() NetworkState {
 	nodes := p.store.ListNodes()
 	acl := p.store.GetACL()
-	return NetworkState{
+	ns := NetworkState{
 		Version:   p.store.UpdatedAt().UnixNano(),
 		UpdatedAt: p.store.UpdatedAt().UTC().Format(time.RFC3339),
 		Nodes:     nodes,
 		ACL:       acl,
 	}
+	if p.derpMap != nil {
+		ns.DERPMap = p.derpMap()
+	}
+	return ns
 }

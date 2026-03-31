@@ -76,16 +76,32 @@ func DefaultNodeConfig() *NodeConfig {
 }
 
 // LoadNodeConfig reads a JSON config file and merges it over defaults.
+// The file may be either:
+//   - flat: {"server_url": "...", "hostname": "...", ...}
+//   - nested: {"server": {...}, "node": {"server_url": "...", ...}}
+//
+// When nested, only the "node" key is used; the "server" key is ignored.
 func LoadNodeConfig(path string) (*NodeConfig, error) {
 	cfg := DefaultNodeConfig()
 
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open config %s: %w", path, err)
+		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
-	defer f.Close()
 
-	if err := json.NewDecoder(f).Decode(cfg); err != nil {
+	// Try nested format first: {"node": {...}}
+	var wrapper struct {
+		Node json.RawMessage `json:"node"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err == nil && len(wrapper.Node) > 0 {
+		if err := json.Unmarshal(wrapper.Node, cfg); err != nil {
+			return nil, fmt.Errorf("parse config %s: %w", path, err)
+		}
+		return cfg, nil
+	}
+
+	// Fall back to flat format.
+	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return cfg, nil

@@ -297,15 +297,20 @@ func runServer(args []string) {
 		cfg = config.DefaultServerConfig()
 	}
 
-	if *addr != "" {
-		cfg.Addr = *addr
-	}
-	if *subnet != "" {
-		cfg.Subnet = *subnet
-	}
-	if *dataDir != "" {
-		cfg.DataDir = *dataDir
-	}
+	// CLI flags override config file values only when explicitly set.
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "addr":
+			cfg.Addr = *addr
+		case "subnet":
+			cfg.Subnet = *subnet
+		case "data-dir":
+			cfg.DataDir = *dataDir
+		case "log-level":
+			cfg.LogLevel = *logLevel
+		}
+	})
+
 	if *tlsEnabled {
 		cfg.TLS.Enabled = true
 		cfg.TLS.SelfSigned = *selfSigned
@@ -323,8 +328,12 @@ func runServer(args []string) {
 
 	if *withRelay {
 		relaySrv := relay.NewServer(log)
+		relayAddr := cfg.DERP.Addr
+		if relayAddr == "" {
+			relayAddr = cfg.Addr
+		}
 		go func() {
-			if err := relaySrv.Start(ctx, cfg.Addr); err != nil {
+			if err := relaySrv.Start(ctx, relayAddr); err != nil {
 				log.Error("relay server error", "err", err)
 			}
 		}()

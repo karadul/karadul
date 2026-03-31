@@ -174,6 +174,85 @@ func TestSaveLoadServerConfig(t *testing.T) {
 	}
 }
 
+func TestLoadServerConfig_NestedFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	// Write a nested-format config (like config.example.json).
+	nested := `{
+		"server": {
+			"addr": ":9999",
+			"approval_mode": "manual",
+			"subnet": "10.0.0.0/8",
+			"rate_limit": 50,
+			"admin_secret": "s3cret"
+		},
+		"node": {
+			"server_url": "https://example.com"
+		}
+	}`
+	if err := os.WriteFile(path, []byte(nested), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadServerConfig(path)
+	if err != nil {
+		t.Fatalf("LoadServerConfig nested: %v", err)
+	}
+	if cfg.Addr != ":9999" {
+		t.Errorf("Addr: got %q, want %q", cfg.Addr, ":9999")
+	}
+	if cfg.ApprovalMode != "manual" {
+		t.Errorf("ApprovalMode: got %q, want %q", cfg.ApprovalMode, "manual")
+	}
+	if cfg.Subnet != "10.0.0.0/8" {
+		t.Errorf("Subnet: got %q, want %q", cfg.Subnet, "10.0.0.0/8")
+	}
+	if cfg.RateLimit != 50 {
+		t.Errorf("RateLimit: got %d, want %d", cfg.RateLimit, 50)
+	}
+	if cfg.AdminSecret != "s3cret" {
+		t.Errorf("AdminSecret: got %q, want %q", cfg.AdminSecret, "s3cret")
+	}
+}
+
+func TestLoadNodeConfig_NestedFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	nested := `{
+		"server": {
+			"addr": ":8080"
+		},
+		"node": {
+			"server_url": "https://my-server:8080",
+			"hostname": "test-node",
+			"listen_port": 51820,
+			"log_level": "debug"
+		}
+	}`
+	if err := os.WriteFile(path, []byte(nested), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadNodeConfig(path)
+	if err != nil {
+		t.Fatalf("LoadNodeConfig nested: %v", err)
+	}
+	if cfg.ServerURL != "https://my-server:8080" {
+		t.Errorf("ServerURL: got %q, want %q", cfg.ServerURL, "https://my-server:8080")
+	}
+	if cfg.Hostname != "test-node" {
+		t.Errorf("Hostname: got %q, want %q", cfg.Hostname, "test-node")
+	}
+	if cfg.ListenPort != 51820 {
+		t.Errorf("ListenPort: got %d, want %d", cfg.ListenPort, 51820)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("LogLevel: got %q, want %q", cfg.LogLevel, "debug")
+	}
+}
+
 // ─── ValidateNodeConfig additional error paths ───────────────────────────────
 
 func TestValidateNodeConfig_EmptyServerURL(t *testing.T) {
