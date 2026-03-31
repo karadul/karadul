@@ -301,7 +301,9 @@ func (t *windowsTUN) Read(buf []byte) (int, error) {
 	// Copy packet data to provided buffer
 	n := int(packetSize)
 	if n > len(buf) {
-		n = len(buf)
+		// Release the packet before returning error.
+		procReleaseReceivePacket.Call(uintptr(t.session), packetPtr)
+		return 0, fmt.Errorf("packet too large: %d bytes (buffer %d)", packetSize, len(buf))
 	}
 
 	// Copy from packet pointer to buffer

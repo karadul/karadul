@@ -1,6 +1,7 @@
 package nat
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -35,7 +36,7 @@ type PunchPacket struct {
 //
 // Both peers must call HolePunch simultaneously — the coordination server
 // should trigger them within ±50ms of each other.
-func HolePunch(conn *net.UDPConn, remoteEndpoint *net.UDPAddr) (*HolePunchResult, error) {
+func HolePunch(ctx context.Context, conn *net.UDPConn, remoteEndpoint *net.UDPAddr) (*HolePunchResult, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("conn must not be nil")
 	}
@@ -76,8 +77,11 @@ func HolePunch(conn *net.UDPConn, remoteEndpoint *net.UDPAddr) (*HolePunchResult
 	defer timeout.Stop()
 
 	for i := 0; i < hpRetries; i++ {
-		// Apply ±jitter.
+		// Apply ±jitter (clamp negative to 0).
 		jitter := time.Duration(rand.Int63n(int64(hpJitter*2))) - hpJitter
+		if jitter < 0 {
+			jitter = 0
+		}
 		time.Sleep(jitter)
 
 		_ = conn.SetWriteDeadline(time.Now().Add(hpInterval))
@@ -93,6 +97,9 @@ func HolePunch(conn *net.UDPConn, remoteEndpoint *net.UDPAddr) (*HolePunchResult
 		case <-timeout.C:
 			close(done)
 			return &HolePunchResult{Success: false}, nil
+		case <-ctx.Done():
+			close(done)
+			return nil, ctx.Err()
 		}
 	}
 

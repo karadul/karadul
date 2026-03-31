@@ -149,7 +149,7 @@ func runUp(args []string) {
 	hostname := fs.String("hostname", "", "node hostname")
 	listenPort := fs.Int("listen-port", 0, "UDP listen port (0=random)")
 	routes := fs.String("advertise-routes", "", "comma-separated routes to advertise")
-	exitNode := fs.Bool("advertise-exit-node", false, "advertise as exit node")
+	_ = fs.Bool("advertise-exit-node", false, "advertise as exit node")
 	logLevel := fs.String("log-level", "info", "log level")
 	_ = fs.Parse(args)
 
@@ -164,27 +164,25 @@ func runUp(args []string) {
 		cfg = config.DefaultNodeConfig()
 	}
 
-	// CLI flags override config file.
-	if *server != "" {
-		cfg.ServerURL = *server
-	}
-	if *authKey != "" {
-		cfg.AuthKey = *authKey
-	}
-	if *hostname != "" {
-		cfg.Hostname = *hostname
-	}
-	if *listenPort != 0 {
-		cfg.ListenPort = *listenPort
-	}
-	if *exitNode {
-		cfg.AdvertiseExitNode = true
-	}
-	if *routes != "" {
-		for _, r := range splitComma(*routes) {
-			cfg.AdvertiseRoutes = append(cfg.AdvertiseRoutes, r)
+	// CLI flags override config file values only when explicitly set.
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "server":
+			cfg.ServerURL = *server
+		case "auth-key":
+			cfg.AuthKey = *authKey
+		case "hostname":
+			cfg.Hostname = *hostname
+		case "listen-port":
+			cfg.ListenPort = *listenPort
+		case "advertise-exit-node":
+			cfg.AdvertiseExitNode = true
+		case "advertise-routes":
+			for _, r := range splitComma(*routes) {
+				cfg.AdvertiseRoutes = append(cfg.AdvertiseRoutes, r)
+			}
 		}
-	}
+	})
 
 	// Phase 1: point-to-point mode (no coordination server).
 	if *peer != "" && *remotePub != "" {
@@ -201,8 +199,8 @@ func runUp(args []string) {
 	if err != nil {
 		log.Info("no existing key pair found, generating new one")
 		kp, err = crypto.GenerateKeyPair()
-		fatalf(err, "generate keys")
-		fatalf(crypto.SaveKeyPair(kp, cfg.DataDir), "save keys")
+		must(err, "generate keys")
+		must(crypto.SaveKeyPair(kp, cfg.DataDir), "save keys")
 	}
 
 	ctx, cancel := signalContext()
@@ -220,8 +218,8 @@ func runDirectTunnel(cfg *config.NodeConfig, peerEndpoint, remotePubB64 string, 
 	kp, err := crypto.LoadKeyPair(cfg.DataDir)
 	if err != nil {
 		kp, err = crypto.GenerateKeyPair()
-		fatalf(err, "generate keys")
-		fatalf(crypto.SaveKeyPair(kp, cfg.DataDir), "save keys")
+		must(err, "generate keys")
+		must(crypto.SaveKeyPair(kp, cfg.DataDir), "save keys")
 	}
 
 	remotePub, err := crypto.KeyFromBase64(remotePubB64)
@@ -953,8 +951,24 @@ func fatalf(err error, msg string) {
 	}
 }
 
+// must is like fatalf but always exits. Use for calls after a fatalf that
+// should never be reached on the error path.
+func must(err error, msg string) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s: %v\n", msg, err)
+		os.Exit(1)
+	}
+}
+
 func defaultDataDir() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		fmt.Fprintf(os.Stderr, "error: cannot determine home directory (set $HOME)\n")
+		os.Exit(1)
+	}
 	return filepath.Join(home, ".karadul")
 }
 

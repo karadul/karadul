@@ -109,6 +109,7 @@ type Engine struct {
 	// Lifecycle
 	stopCh chan struct{}
 	cancel context.CancelFunc // used by local API /shutdown
+	ctx    context.Context    // set by Start
 
 	// Buffer pool — reuse large slices for packet I/O
 	bufPool sync.Pool
@@ -146,6 +147,7 @@ func NewEngine(cfg *config.NodeConfig, kp crypto.KeyPair, log *klog.Logger) *Eng
 func (e *Engine) Start(ctx context.Context) error {
 	// Wrap ctx so we can cancel from the local API /shutdown endpoint.
 	ctx, e.cancel = context.WithCancel(ctx)
+	e.ctx = ctx
 
 	// Register with coordination server.
 	if err := e.register(ctx); err != nil {
@@ -1025,7 +1027,7 @@ func (e *Engine) connectPeer(peer *mesh.Peer) error {
 	// Try UDP hole punching (requires coordination server endpoint exchange).
 	if ep := peer.GetEndpoint(); ep != nil {
 		e.log.Debug("trying hole punch", "peer", peer.Hostname, "ep", ep)
-		result, err := nat.HolePunch(e.udp, ep)
+		result, err := nat.HolePunch(e.ctx, e.udp, ep)
 		if err == nil && result.Success {
 			peer.SetEndpoint(result.Endpoint)
 			e.log.Info("hole punch succeeded", "peer", peer.Hostname, "ep", result.Endpoint)

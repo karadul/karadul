@@ -1,6 +1,7 @@
 package nat
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestIsProbe_Empty(t *testing.T) {
 // TestHolePunch_NilConn verifies HolePunch returns an error for nil conn.
 func TestHolePunch_NilConn(t *testing.T) {
 	remote, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:9")
-	if _, err := HolePunch(nil, remote); err == nil {
+	if _, err := HolePunch(context.Background(), nil, remote); err == nil {
 		t.Fatal("HolePunch with nil conn should return error")
 	}
 }
@@ -122,7 +123,7 @@ func TestHolePunch_Success(t *testing.T) {
 	}
 	defer local.Close()
 
-	result, err := HolePunch(local, remoteAddr)
+	result, err := HolePunch(context.Background(), local, remoteAddr)
 	if err != nil {
 		t.Fatalf("HolePunch: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestHolePunch_Timeout(t *testing.T) {
 	}
 	defer local.Close()
 
-	result, err := HolePunch(local, remote.LocalAddr().(*net.UDPAddr))
+	result, err := HolePunch(context.Background(), local, remote.LocalAddr().(*net.UDPAddr))
 	if err != nil {
 		t.Fatalf("HolePunch unexpected error: %v", err)
 	}
