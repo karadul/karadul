@@ -62,6 +62,8 @@ func BindingRequest(conn *net.UDPConn, serverAddr string) (*BindingResult, error
 	if err != nil {
 		return nil, fmt.Errorf("read stun response: %w", err)
 	}
+	// Clear the deadline so the connection can be reused.
+	_ = conn.SetReadDeadline(time.Time{})
 
 	publicAddr, err := parseBindingResponse(buf[:n], txID)
 	if err != nil {

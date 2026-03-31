@@ -157,17 +157,10 @@ func (m *Manager) gcLoop() {
 		case <-m.done:
 			return
 		case <-ticker.C:
-			m.mu.RLock()
-			peers := make([]*Peer, 0, len(m.peers))
+			m.mu.Lock()
 			for _, p := range m.peers {
-				peers = append(peers, p)
-			}
-			m.mu.RUnlock()
-			for _, p := range peers {
 				p.IdleCheck()
 			}
-			// Remove expired peers from maps.
-			m.mu.Lock()
 			for k, p := range m.peers {
 				if p.IsExpired() {
 					delete(m.peers, k)

@@ -94,6 +94,7 @@ func (ks *KeyStore) Load(id string) (*PreAuthKey, error) {
 }
 
 // FindBySecret returns the key whose Secret field matches.
+// It reads each key file's JSON directly without full deserialization overhead.
 func (ks *KeyStore) FindBySecret(secret string) (*PreAuthKey, error) {
 	entries, err := os.ReadDir(ks.dir)
 	if err != nil {
@@ -103,10 +104,11 @@ func (ks *KeyStore) FindBySecret(secret string) (*PreAuthKey, error) {
 		if e.IsDir() {
 			continue
 		}
-		id := e.Name()
-		if len(id) > 5 && id[len(id)-5:] == ".json" {
-			id = id[:len(id)-5]
+		name := e.Name()
+		if len(name) <= 5 || name[len(name)-5:] != ".json" {
+			continue
 		}
+		id := name[:len(name)-5]
 		k, err := ks.Load(id)
 		if err != nil {
 			continue

@@ -16,6 +16,7 @@ const (
 	derpPath           = "/derp"
 	pingInterval       = 30 * time.Second
 	clientWriteTimeout = 5 * time.Second
+	maxClients         = 1024
 )
 
 // Server is a DERP relay server.
@@ -99,6 +100,15 @@ func (s *Server) handleClient(conn net.Conn, rw *bufio.ReadWriter) {
 
 	var pubKey [32]byte
 	copy(pubKey[:], frame.Payload[:32])
+
+	// Enforce max client limit.
+	s.mu.RLock()
+	n := len(s.clients)
+	s.mu.RUnlock()
+	if n >= maxClients {
+		s.log.Warn("derp: max clients reached, rejecting", "key", fmt.Sprintf("%x", pubKey[:4]))
+		return
+	}
 
 	sc := &serverClient{
 		pubKey: pubKey,
