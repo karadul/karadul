@@ -136,6 +136,9 @@ func (s *Server) Start(ctx context.Context, webHandler http.Handler) error {
 	}
 
 	s.log.Info("coordination server started", "addr", s.cfg.Addr, "tls", s.cfg.TLS.Enabled)
+	if s.cfg.AdminSecret == "" {
+		s.log.Warn("admin endpoints are UNPROTECTED — set admin_secret in config for production use")
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -146,11 +149,13 @@ func (s *Server) Start(ctx context.Context, webHandler http.Handler) error {
 
 	select {
 	case <-ctx.Done():
+		s.api.Close()
 		s.hub.Close()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return s.httpSrv.Shutdown(shutCtx)
 	case err := <-errCh:
+		s.api.Close()
 		s.hub.Close()
 		return err
 	}

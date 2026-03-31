@@ -9,7 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
+		"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1772,7 +1773,7 @@ func TestRegister_IPPoolExhausted(t *testing.T) {
 
 	// Try to register a new node - should fail with 503
 	reqBody := RegisterRequest{
-		PublicKey: "NEWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		PublicKey: "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // valid 32-byte key
 		Hostname:  "newnode",
 		AuthKey:   ak.Key,
 	}
@@ -1822,7 +1823,7 @@ func TestRegister_StoreAddNodeError(t *testing.T) {
 
 	// Try to register - should fail with 500 due to store error
 	reqBody := RegisterRequest{
-		PublicKey: "ERRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		PublicKey: "AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // valid 32-byte key
 		Hostname:  "errornode",
 		AuthKey:   ak.Key,
 	}
@@ -1877,5 +1878,70 @@ func TestAdminAuthKeys_StoreAddAuthKeyError(t *testing.T) {
 
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when store fails, got %d", resp.StatusCode)
+	}
+}
+
+func TestRegister_InvalidPublicKey(t *testing.T) {
+	api, ts := newTestAPI(t)
+	ak, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak)
+
+	tests := []struct {
+		name   string
+		pubKey string
+	}{
+		{"empty", ""},
+		{"too short", "AAAA"},
+		{"not base64", "!!!not-base64!!!"},
+		{"wrong length", base64.StdEncoding.EncodeToString(make([]byte, 16))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(RegisterRequest{
+				PublicKey: tt.pubKey,
+				Hostname:  "test",
+				AuthKey:   ak.Key,
+			})
+			resp, err := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("want 400, got %d", resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestRegister_InvalidHostname(t *testing.T) {
+	api, ts := newTestAPI(t)
+	ak, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak)
+
+	tests := []struct {
+		name     string
+		hostname string
+	}{
+		{"special chars", "node<script>alert(1)</script>"},
+		{"spaces", "node with spaces"},
+		{"too long", strings.Repeat("a", 254)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(RegisterRequest{
+				PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+				Hostname:  tt.hostname,
+				AuthKey:   ak.Key,
+			})
+			resp, err := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("want 400 for %q, got %d", tt.hostname, resp.StatusCode)
+			}
+		})
 	}
 }

@@ -2,10 +2,12 @@ package coordinator
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"runtime"
@@ -53,6 +55,13 @@ type API struct {
 	cfg          *config.ServerConfig
 	startTime    time.Time
 	cpuSampler   *cpuSampler
+}
+
+// Close releases resources held by the API.
+func (a *API) Close() {
+	if a.cpuSampler != nil {
+		a.cpuSampler.Stop()
+	}
 }
 
 // NewAPI creates an API handler set.
@@ -114,6 +123,35 @@ func (a *API) adminAuth() func(http.Handler) http.Handler {
 	}
 }
 
+// isValidPublicKey checks that s is a valid base64-encoded 32-byte key.
+func isValidPublicKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		b, err = base64.RawStdEncoding.DecodeString(s)
+		if err != nil {
+			return false
+		}
+	}
+	return len(b) == 32
+}
+
+// sanitizeHostname returns a cleaned hostname or rejects it.
+func sanitizeHostname(s string) (string, error) {
+	if len(s) > 253 {
+		return "", fmt.Errorf("hostname too long (%d bytes)", len(s))
+	}
+	// Allow alphanumeric, hyphens, dots.
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.') {
+			return "", fmt.Errorf("hostname contains invalid character: %q", c)
+		}
+	}
+	return s, nil
+}
+
 // handleRegister handles POST /api/v1/register.
 func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -131,6 +169,22 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
+	}
+
+	// Validate public key.
+	if !isValidPublicKey(req.PublicKey) {
+		http.Error(w, "invalid public key: must be base64-encoded 32 bytes", http.StatusBadRequest)
+		return
+	}
+
+	// Sanitize hostname if provided.
+	if req.Hostname != "" {
+		clean, err := sanitizeHostname(req.Hostname)
+		if err != nil {
+			http.Error(w, "invalid hostname: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.Hostname = clean
 	}
 
 	// Validate auth key.
@@ -154,14 +208,17 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	existing, exists := a.store.GetNodeByPubKey(req.PublicKey)
 	if exists {
 		// Update and return.
-		_ = a.store.UpdateNode(existing.ID, func(n *Node) {
+		if err := a.store.UpdateNode(existing.ID, func(n *Node) {
 			if req.Hostname != "" {
 				n.Hostname = req.Hostname
 			}
 			n.Routes = req.Routes
 			n.IsExitNode = req.IsExitNode
 			n.LastSeen = time.Now()
-		})
+		}); err != nil {
+			http.Error(w, "store error", http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, RegisterResponse{
 			NodeID:    existing.ID,
 			VirtualIP: existing.VirtualIP,
@@ -203,7 +260,9 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	// Mark ephemeral key used.
 	if ak.Ephemeral {
-		_ = a.store.MarkAuthKeyUsed(ak.ID)
+		if err := a.store.MarkAuthKeyUsed(ak.ID); err != nil {
+			log.Printf("warn: mark auth key used: %v", err)
+		}
 	}
 
 	writeJSON(w, RegisterResponse{
@@ -260,12 +319,15 @@ func (a *API) handleUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = a.store.UpdateNode(node.ID, func(n *Node) {
+	if err := a.store.UpdateNode(node.ID, func(n *Node) {
 		n.Endpoint = req.Endpoint
 		n.LastSeen = time.Now()
 		n.RxBytes = req.RxBytes
 		n.TxBytes = req.TxBytes
-	})
+	}); err != nil {
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -384,9 +446,11 @@ func (a *API) handlePing(w http.ResponseWriter, r *http.Request) {
 
 	pubKey := r.Header.Get(headerKey)
 	if node, ok := a.store.GetNodeByPubKey(pubKey); ok {
-		_ = a.store.UpdateNode(node.ID, func(n *Node) {
+		if err := a.store.UpdateNode(node.ID, func(n *Node) {
 			n.LastSeen = time.Now()
-		})
+		}); err != nil {
+			log.Printf("warn: ping update lastSeen: %v", err)
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -490,10 +554,12 @@ func (a *API) handleExchangeEndpoint(w http.ResponseWriter, r *http.Request) {
 	callerPubKey := r.Header.Get(headerKey)
 	if callerNode, ok := a.store.GetNodeByPubKey(callerPubKey); ok {
 		if req.MyEndpoint != "" {
-			_ = a.store.UpdateNode(callerNode.ID, func(n *Node) {
+			if err := a.store.UpdateNode(callerNode.ID, func(n *Node) {
 				n.Endpoint = req.MyEndpoint
 				n.LastSeen = time.Now()
-			})
+			}); err != nil {
+				log.Printf("warn: exchange-endpoint update caller: %v", err)
+			}
 		}
 	}
 
@@ -568,17 +634,21 @@ func (a *API) handleAdminAuthKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
 		http.Error(w, "encode error", http.StatusInternalServerError)
+		return
 	}
+	data = append(data, '\n')
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 func generateID() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("karadul: crypto/rand.Read failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -738,7 +808,9 @@ func (a *API) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		// Persist config to disk.
 		if a.cfg.DataDir != "" {
 			configPath := a.cfg.DataDir + "/config.json"
-			_ = config.SaveServerConfig(a.cfg, configPath)
+			if err := config.SaveServerConfig(a.cfg, configPath); err != nil {
+				log.Printf("warn: admin config save failed: %v", err)
+			}
 		}
 		writeJSON(w, cfg)
 	default:

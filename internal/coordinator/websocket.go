@@ -48,7 +48,7 @@ var upgrader = websocket.Upgrader{
 func NewHub(store *Store, allowedOrigins []string) *Hub {
 	return &Hub{
 		clients:        make(map[*Client]bool),
-		broadcast:      make(chan []byte),
+		broadcast:      make(chan []byte, 64),
 		register:       make(chan *Client),
 		unregister:     make(chan *Client),
 		done:           make(chan struct{}),
