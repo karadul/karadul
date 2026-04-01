@@ -8,7 +8,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/karadul/karadul)](https://goreportcard.com/report/github.com/karadul/karadul)
 [![Release](https://img.shields.io/github/v/release/karadul/karadul?include_prereleases)](https://github.com/karadul/karadul/releases)
 
-> 🧪 **Beta Available:** [v0.1.0-beta.1](https://github.com/karadul/karadul/releases/tag/v0.1.0-beta.1) now with Windows support! [Test it out →](https://github.com/karadul/karadul/releases)
+> 🧪 **Latest:** [v0.2.0-beta.1](https://github.com/karadul/karadul/releases/tag/v0.2.0-beta.1) — 48 security fixes, IPv6 STUN, firewall rules, store GC, 78% test coverage. [Release notes →](https://github.com/karadul/karadul/releases)
 
 ---
 
