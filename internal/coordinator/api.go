@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/karadul/karadul/internal/config"
@@ -54,6 +55,7 @@ type API struct {
 	poller       *Poller
 	approvalMode string // "auto" or "manual"
 	cfg          *config.ServerConfig
+	cfgMu        sync.RWMutex // protects cfg for concurrent reads/writes
 	startTime    time.Time
 	cpuSampler   *cpuSampler
 }
@@ -392,6 +394,14 @@ func (a *API) handleUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate endpoint format (host:port).
+	if req.Endpoint != "" {
+		if _, _, err := net.SplitHostPort(req.Endpoint); err != nil {
+			http.Error(w, "invalid endpoint format", http.StatusBadRequest)
+			return
+		}
+	}
+
 	if err := a.store.UpdateNode(node.ID, func(n *Node) {
 		n.Endpoint = req.Endpoint
 		n.LastSeen = time.Now()
@@ -474,6 +484,9 @@ func (a *API) handleDERPMap(w http.ResponseWriter, r *http.Request) {
 
 // buildDERPMap constructs the DERPMap from the current configuration.
 func (a *API) buildDERPMap() *DERPMap {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+
 	regions := []*DERPRegion{}
 
 	if a.cfg == nil || !a.cfg.DERP.Enabled {
@@ -639,6 +652,14 @@ func (a *API) handleExchangeEndpoint(w http.ResponseWriter, r *http.Request) {
 	if !isValidPublicKey(req.TargetPubKey) {
 		http.Error(w, "invalid targetPubKey", http.StatusBadRequest)
 		return
+	}
+
+	// Validate MyEndpoint format (host:port) if provided.
+	if req.MyEndpoint != "" {
+		if _, _, err := net.SplitHostPort(req.MyEndpoint); err != nil {
+			http.Error(w, "invalid myEndpoint format", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Update caller's endpoint.
@@ -901,14 +922,19 @@ func (a *API) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Preserve TLS config from existing if not provided in update.
+		a.cfgMu.RLock()
+		existingTLS := a.cfg.TLS
+		a.cfgMu.RUnlock()
 		if cfg.TLS == (config.TLSConfig{}) {
-			cfg.TLS = a.cfg.TLS
+			cfg.TLS = existingTLS
 		}
 		if err := config.ValidateServerConfig(&cfg); err != nil {
 			http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		a.cfgMu.Lock()
 		*a.cfg = cfg
+		a.cfgMu.Unlock()
 		// Persist config to disk.
 		if a.cfg.DataDir != "" {
 			configPath := a.cfg.DataDir + "/config.json"
