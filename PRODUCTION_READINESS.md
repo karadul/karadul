@@ -1,6 +1,6 @@
 # Karadul — Production Readiness Report
 
-> Generated: 2026-04-01 | Branch: main | Go 1.25
+> Generated: 2026-04-02 | Branch: main | Go 1.25
 
 ---
 
@@ -24,9 +24,9 @@
 |--------|-------|
 | Go source files | 69 |
 | Go test files | 37 |
-| Source lines of code | ~12,200 |
-| Test lines of code | ~12,500 |
-| Source-to-test ratio | 1 : 1.02 |
+| Source lines of code | ~11,500 |
+| Test lines of code | ~15,400 |
+| Source-to-test ratio | 1 : 1.34 |
 | Number of packages | 16 (14 project-owned) |
 
 ---
@@ -44,14 +44,14 @@
 | `internal/relay` | 89.0% | B+ |
 | `internal/auth` | 82.4% | B |
 | `internal/dns` | 79.7% | B |
-| `internal/coordinator` | 67.0% | C+ |
-| `internal/tunnel` | 26.5% | D |
-| `internal/node` | ~25% | C |
+| `internal/coordinator` | 81.2% | B |
+| `internal/tunnel` | 29.2% | D |
+| `internal/node` | 29.2% | D |
 | `cmd/karadul` | 6.9% | F |
-| `internal/firewall` | no tests | — |
+| `internal/firewall` | 56.6% | D |
 | `internal/web` | no tests | — |
 
-**Weighted average: ~76%**
+**Weighted average: ~68%**
 
 ---
 
@@ -226,8 +226,16 @@
 | `cmd/karadul/main.go` monolithic | Low | Fixed | Decomposed into 9 files |
 | Store no garbage collection | Low | Fixed | Background GC for stale nodes + expired keys |
 | Engine low test coverage | Low | Fixed | 30 test functions covering sessions, metrics, DNS, API, crypto |
+| responseWriter missing http.Hijacker — WebSocket upgrades broken | High | Fixed | Added `Hijack()` method to responseWriter |
+| Admin config data race (concurrent read/write on a.cfg) | High | Fixed | `cfgMu.RLock` in `buildDERPMap`, `cfgMu.Lock` in `handleAdminConfig` |
+| handleUpdateEndpoint no endpoint format validation | Medium | Fixed | `net.SplitHostPort` validation |
+| handleExchangeEndpoint no MyEndpoint format validation | Medium | Fixed | `net.SplitHostPort` validation |
+| handleAdminACL no ACL rule validation | Medium | Fixed | Action allow/deny check + port validation |
+| Local API handlers no body size limits | Medium | Fixed | `io.LimitReader(r.Body, 4096)` on exit-node handlers |
+| json.Encoder.Encode errors silently discarded | Low | Fixed | Explicit `_ =` discard |
+| BSD DisableExitNode/EnableExitNode wrong signatures | Low | Fixed | Added `outIface` string parameter |
 
-**Total: 48 issues fixed (3 Critical, 10 High, 28 Medium, 7 Low)**
+**Total: 51 issues fixed (3 Critical, 10 High, 30 Medium, 8 Low)**
 
 ---
 
@@ -236,9 +244,7 @@
 | Gap | Severity | Package | Notes |
 |-----|----------|---------|-------|
 | BSD platform unsupported | Medium | tunnel/dns/firewall/node | TUN, DNS, firewall, exit node all stubs |
-| `internal/coordinator` coverage 67% | Low | coordinator | More handler tests needed |
 | Go toolchain version mismatch warnings | Low | build | `go1.25.8` vs `go1.25.7` cache |
-| `internal/firewall` no tests | Low | firewall | Platform-specific (requires root) |
 
 ---
 
@@ -259,6 +265,6 @@
 ## Recommendations Before Production
 
 1. **BSD platform support** — Implement TUN, DNS, firewall for FreeBSD/OpenBSD.
-2. **Increase coordinator test coverage** — Add more handler edge-case tests.
-3. **Integration tests** — End-to-end test: register → poll → handshake → ping → data transfer.
-4. **Persist node shared secrets** — Currently in-memory only; lost on server restart.
+2. **Integration tests** — End-to-end test: register → poll → handshake → ping → data transfer.
+3. **Persist node shared secrets** — Currently in-memory only; lost on server restart.
+4. **51 issues fixed** across security, race conditions, validation, and platform correctness.

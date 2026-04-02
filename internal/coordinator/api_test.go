@@ -1430,6 +1430,76 @@ func TestAdminACL_PutSuccess(t *testing.T) {
 	}
 }
 
+// TestHandleAdminACL_InvalidAction verifies that PUT /admin/acl rejects invalid actions.
+func TestHandleAdminACL_InvalidAction(t *testing.T) {
+	_, ts := newTestAPI(t)
+
+	tests := []struct {
+		name   string
+		action string
+	}{
+		{"invalid_action_accept", "accept"},
+		{"empty_action", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := ACLPolicy{
+				Version: 1,
+				Rules: []ACLRule{
+					{Action: tt.action, Src: []string{"*"}, Dst: []string{"*"}},
+				},
+			}
+			body, _ := json.Marshal(policy)
+			req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/admin/acl", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("action %q: want 400, got %d", tt.action, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestHandleAdminACL_InvalidPorts verifies that PUT /admin/acl rejects invalid port values.
+func TestHandleAdminACL_InvalidPorts(t *testing.T) {
+	_, ts := newTestAPI(t)
+
+	tests := []struct {
+		name  string
+		ports []string
+	}{
+		{"port_zero", []string{"0"}},
+		{"port_too_high", []string{"70000"}},
+		{"port_range_inverted", []string{"443-80"}},
+		{"port_non_numeric", []string{"abc"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := ACLPolicy{
+				Version: 1,
+				Rules: []ACLRule{
+					{Action: "allow", Src: []string{"*"}, Dst: []string{"*"}, Ports: tt.ports},
+				},
+			}
+			body, _ := json.Marshal(policy)
+			req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/admin/acl", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("ports %v: want 400, got %d", tt.ports, resp.StatusCode)
+			}
+		})
+	}
+}
+
 // TestAdminAuthKeys_DeleteEmptyID verifies DELETE with no key ID returns 400.
 // The handler is invoked directly to avoid mux path cleaning.
 func TestAdminAuthKeys_DeleteEmptyID(t *testing.T) {

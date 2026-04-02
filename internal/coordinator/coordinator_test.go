@@ -297,7 +297,39 @@ func TestIsValidPublicKey(t *testing.T) {
 	}
 }
 
-// ─── 7. TestSanitizeHostname ──────────────────────────────────────────────────
+// ─── 7. TestIsValidPort ───────────────────────────────────────────────────────
+
+func TestIsValidPort(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"80", true},
+		{"1", true},
+		{"65535", true},
+		{"0", false},
+		{"", false},
+		{"abc", false},
+		{"80-443", true},
+		{"1-1024", true},
+		{"443-80", false},   // lo > hi
+		{"0-100", false},    // lo < 1
+		{"1-70000", false},  // hi > 65535
+		{"80-", false},
+		{"-80", false},
+		{"80-443-999", false}, // only one dash allowed
+		{"-1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := isValidPort(tt.input); got != tt.want {
+				t.Errorf("isValidPort(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ─── 8. TestSanitizeHostname ──────────────────────────────────────────────────
 
 func TestSanitizeHostname(t *testing.T) {
 	tests := []struct {
@@ -329,7 +361,7 @@ func TestSanitizeHostname(t *testing.T) {
 	}
 }
 
-// ─── 8. TestBuildDERPMap_Disabled ─────────────────────────────────────────────
+// ─── 9. TestBuildDERPMap_Disabled ─────────────────────────────────────────────
 
 func TestBuildDERPMap_Disabled(t *testing.T) {
 	t.Run("nil_config", func(t *testing.T) {
@@ -367,7 +399,7 @@ func TestBuildDERPMap_Disabled(t *testing.T) {
 	})
 }
 
-// ─── 9. TestBuildDERPMap_Enabled ──────────────────────────────────────────────
+// ─── 10. TestBuildDERPMap_Enabled ─────────────────────────────────────────────
 
 func TestBuildDERPMap_Enabled(t *testing.T) {
 	dir := t.TempDir()
@@ -400,7 +432,7 @@ func TestBuildDERPMap_Enabled(t *testing.T) {
 	}
 }
 
-// ─── 10. TestStoreGC_StaleNodeMarking ─────────────────────────────────────────
+// ─── 11. TestStoreGC_StaleNodeMarking ─────────────────────────────────────────
 
 func TestStoreGC_StaleNodeMarking(t *testing.T) {
 	s := newTestStore(t)
@@ -425,7 +457,7 @@ func TestStoreGC_StaleNodeMarking(t *testing.T) {
 	}
 }
 
-// ─── 11. TestStoreGC_ExpiredNodeDeletion ──────────────────────────────────────
+// ─── 12. TestStoreGC_ExpiredNodeDeletion ──────────────────────────────────────
 
 func TestStoreGC_ExpiredNodeDeletion(t *testing.T) {
 	s := newTestStore(t)
@@ -446,7 +478,7 @@ func TestStoreGC_ExpiredNodeDeletion(t *testing.T) {
 	}
 }
 
-// ─── 12. TestStoreGC_ExpiredKeyPruning ─────────────────────────────────────────
+// ─── 13. TestStoreGC_ExpiredKeyPruning ─────────────────────────────────────────
 
 func TestStoreGC_ExpiredKeyPruning(t *testing.T) {
 	s := newTestStore(t)
@@ -482,7 +514,7 @@ func TestStoreGC_ExpiredKeyPruning(t *testing.T) {
 	}
 }
 
-// ─── 13. TestHandleRegister_InvalidRoutes ──────────────────────────────────────
+// ─── 14. TestHandleRegister_InvalidRoutes ──────────────────────────────────────
 
 func TestHandleRegister_InvalidRoutes(t *testing.T) {
 	api, ts := newTestAPI(t)
@@ -507,7 +539,7 @@ func TestHandleRegister_InvalidRoutes(t *testing.T) {
 	}
 }
 
-// ─── 14. TestExchangeEndpoint_InvalidTargetPubKey ─────────────────────────────
+// ─── 15. TestExchangeEndpoint_InvalidTargetPubKey ─────────────────────────────
 
 func TestExchangeEndpoint_InvalidTargetPubKey(t *testing.T) {
 	api, ts := newTestAPI(t)
