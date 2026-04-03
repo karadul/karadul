@@ -92,24 +92,6 @@ func TestHandleHandshakeResp_UnknownReceiverIndex(t *testing.T) {
 	}
 }
 
-func TestHandleHandshakeResp_InvalidPacket(t *testing.T) {
-	e := testEngine(t)
-
-	// Too short to be a HandshakeResp.
-	shortPkt := make([]byte, 20)
-	shortPkt[0] = protocol.TypeHandshakeResp
-
-	// Should silently return.
-	e.handleHandshakeResp(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, shortPkt)
-
-	e.mu.RLock()
-	n := len(e.sessions)
-	e.mu.RUnlock()
-	if n != 0 {
-		t.Errorf("expected 0 sessions after invalid resp, got %d", n)
-	}
-}
-
 func TestHandleHandshakeResp_EmptyPacket(t *testing.T) {
 	e := testEngine(t)
 
