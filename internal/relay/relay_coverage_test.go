@@ -395,22 +395,6 @@ func TestHandleClient_MaxClientsReached(t *testing.T) {
 	}
 }
 
-// trackableConn wraps an io.Reader for use as net.Conn.
-type trackableConn struct {
-	net.Conn
-}
-
-func (c *trackableConn) Close() error { return nil }
-func (c *trackableConn) LocalAddr() net.Addr {
-	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}
-}
-func (c *trackableConn) RemoteAddr() net.Addr {
-	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}
-}
-func (c *trackableConn) SetDeadline(time.Time) error      { return nil }
-func (c *trackableConn) SetReadDeadline(time.Time) error  { return nil }
-func (c *trackableConn) SetWriteDeadline(time.Time) error { return nil }
-
 // ---------------------------------------------------------------------------
 // Server: send goroutine write error
 // ---------------------------------------------------------------------------
