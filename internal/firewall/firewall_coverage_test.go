@@ -1,10 +1,103 @@
 package firewall
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+// ---------------------------------------------------------------------------
+// fakePfctlSetup creates a temporary directory with a fake pfctl script
+// that simulates successful pfctl operations. It sets PATH so that the
+// fake pfctl is found first. Tests using this helper can exercise the
+// success paths of Setup, Remove, Check, AllowPort, RemovePort, and pfctl.
+//
+// The fake pfctl script:
+//   - When called with "-s rules": outputs a pre-written rules list
+//   - For all other invocations: exits 0 silently
+// ---------------------------------------------------------------------------
+
+// fakePfctlRules holds the rules that the fake pfctl will output
+// when called with "-s rules". It is written to a well-known path
+// so the fake script can read it.
+const fakeRulesFile = "karadul_test_rules.txt"
+
+// setupFakePfctl creates a fake pfctl in a temp dir, prepends it to PATH,
+// and writes an initial rules file. Returns a cleanup function.
+// The rulesFile parameter controls what "-s rules" returns.
+func setupFakePfctl(t *testing.T, initialRules string) {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	// Write the fake pfctl script.
+	script := `#!/bin/bash
+RULES_FILE="` + filepath.Join(dir, fakeRulesFile) + `"
+
+# Parse arguments using while/shift to handle positional parameters correctly.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s)
+      if [ "$2" = "rules" ]; then
+        if [ -f "$RULES_FILE" ]; then
+          cat "$RULES_FILE"
+        fi
+        exit 0
+      fi
+      shift 2
+      ;;
+    -f)
+      if [ "$2" = "-" ]; then
+        cat > "$RULES_FILE"
+        exit 0
+      fi
+      shift 2
+      ;;
+    -F)
+      : > "$RULES_FILE"
+      exit 0
+      ;;
+    -e)
+      # pfctl -e (enable) — no-op for fake.
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+# Default: succeed silently.
+exit 0
+`
+	pfctlPath := filepath.Join(dir, "pfctl")
+	if err := os.WriteFile(pfctlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake pfctl: %v", err)
+	}
+
+	// Write initial rules file.
+	rulesPath := filepath.Join(dir, fakeRulesFile)
+	if err := os.WriteFile(rulesPath, []byte(initialRules), 0o644); err != nil {
+		t.Fatalf("failed to write fake rules file: %v", err)
+	}
+
+	// Prepend fake dir to PATH so exec.Command finds our pfctl.
+	origPath := os.Getenv("PATH")
+	newPath := dir + string(os.PathListSeparator) + origPath
+	t.Setenv("PATH", newPath)
+
+	// Verify the fake pfctl is found.
+	p, err := exec.LookPath("pfctl")
+	if err != nil {
+		t.Fatalf("fake pfctl not found in PATH: %v", err)
+	}
+	if p != pfctlPath {
+		t.Fatalf("fake pfctl not first in PATH: got %q, want %q", p, pfctlPath)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // filterRules — pure logic tests (darwin-only code, but test everywhere)
@@ -440,5 +533,271 @@ func TestAllowPort_Darwin_WellKnown(t *testing.T) {
 	}
 	for _, port := range []int{22, 53, 80, 443, 8080, 8443} {
 		_ = AllowPort(port, "tcp")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fake-pfctl tests: exercise success paths by replacing pfctl with a
+// stub that always succeeds. These cover the "return nil" branches and
+// the post-pfctl logic in Setup, Remove, Check, AllowPort, RemovePort,
+// and the pfctl helper.
+// ---------------------------------------------------------------------------
+
+func TestSetup_FakePfctl_Succeeds(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	err := Setup("/usr/local/bin/karadul")
+	if err != nil {
+		t.Fatalf("Setup should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestSetup_FakePfctl_EmptyExePath(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	err := Setup("")
+	if err != nil {
+		t.Fatalf("Setup with empty path should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestRemove_FakePfctl_Succeeds(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "pass on karadul0\n")
+
+	err := Remove()
+	if err != nil {
+		t.Fatalf("Remove should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestRemove_FakePfctl_EmptyRules(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	err := Remove()
+	if err != nil {
+		t.Fatalf("Remove should succeed even with empty rules, got: %v", err)
+	}
+}
+
+func TestCheck_FakePfctl_HasRules(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "pass on karadul0\npass quick proto tcp to any port 443\n")
+
+	result := Check()
+	if !result {
+		t.Fatal("Check should return true when rules exist (fake pfctl)")
+	}
+}
+
+func TestCheck_FakePfctl_NoRules(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	result := Check()
+	if result {
+		t.Fatal("Check should return false when no rules loaded (fake pfctl with empty output)")
+	}
+}
+
+func TestCheck_FakePfctl_WhitespaceOnly(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "   \n  \n")
+
+	result := Check()
+	if result {
+		t.Fatal("Check should return false for whitespace-only rules")
+	}
+}
+
+func TestAllowPort_FakePfctl_Succeeds(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "pass on karadul0\n")
+
+	err := AllowPort(443, "tcp")
+	if err != nil {
+		t.Fatalf("AllowPort should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestAllowPort_FakePfctl_UDP_Succeeds(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	err := AllowPort(53, "udp")
+	if err != nil {
+		t.Fatalf("AllowPort UDP should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestRemovePort_FakePfctl_Succeeds(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "pass quick proto tcp to any port 443\npass on karadul0\n")
+
+	err := RemovePort(443, "tcp")
+	if err != nil {
+		t.Fatalf("RemovePort should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestRemovePort_FakePfctl_NoMatchingRules(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	// RemovePort with no matching rules should still succeed (reload empty).
+	setupFakePfctl(t, "pass on karadul0\n")
+
+	err := RemovePort(9999, "tcp")
+	if err != nil {
+		t.Fatalf("RemovePort with no matching rules should succeed, got: %v", err)
+	}
+}
+
+func TestRemovePort_FakePfctl_UDP(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "pass quick proto udp to any port 51820\npass on karadul0\n")
+
+	err := RemovePort(51820, "udp")
+	if err != nil {
+		t.Fatalf("RemovePort UDP should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestRemovePort_FakePfctl_EmptyRules(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	err := RemovePort(80, "tcp")
+	if err != nil {
+		t.Fatalf("RemovePort with empty rules should succeed, got: %v", err)
+	}
+}
+
+func TestPfctl_FakePfctl_Succeeds(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	err := pfctl("-f", "/etc/pf.conf")
+	if err != nil {
+		t.Fatalf("pfctl helper should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestPfctl_FakePfctl_NoArgs(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	err := pfctl()
+	if err != nil {
+		t.Fatalf("pfctl() with no args should succeed with fake pfctl, got: %v", err)
+	}
+}
+
+func TestSetupThenRemove_FakePfctl(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	if err := Setup(""); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if err := Remove(); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+}
+
+func TestSetupThenCheck_FakePfctl(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	if err := Setup(""); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	// Setup loads rules via stdin, so Check should see them.
+	if !Check() {
+		t.Fatal("Check should return true after Setup with fake pfctl")
+	}
+}
+
+func TestAllowPortThenRemovePort_FakePfctl(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "pass on karadul0\n")
+
+	if err := AllowPort(8080, "tcp"); err != nil {
+		t.Fatalf("AllowPort: %v", err)
+	}
+	if err := RemovePort(8080, "tcp"); err != nil {
+		t.Fatalf("RemovePort: %v", err)
+	}
+}
+
+func TestFullLifecycle_FakePfctl(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctl(t, "")
+
+	// Setup
+	if err := Setup(""); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	// Verify Check sees rules
+	if !Check() {
+		t.Fatal("Check should return true after Setup")
+	}
+
+	// Allow some ports
+	if err := AllowPort(443, "tcp"); err != nil {
+		t.Fatalf("AllowPort 443/tcp: %v", err)
+	}
+	if err := AllowPort(53, "udp"); err != nil {
+		t.Fatalf("AllowPort 53/udp: %v", err)
+	}
+
+	// Remove one port
+	if err := RemovePort(53, "udp"); err != nil {
+		t.Fatalf("RemovePort 53/udp: %v", err)
+	}
+
+	// Full remove
+	if err := Remove(); err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 }
