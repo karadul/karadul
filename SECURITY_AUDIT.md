@@ -12,7 +12,7 @@
 
 Karadul is a well-structured mesh VPN implementation following the Noise IK handshake pattern (WireGuard-compatible crypto). The codebase demonstrates strong fundamentals: proper use of `crypto/rand`, consistent `io.LimitReader` usage, good HTTP server timeout configuration, and a clean package architecture with proper `internal/` boundaries.
 
-However, the audit uncovered **one critical authentication design flaw** (HMAC using public key as secret), several **high-severity race conditions** in the mesh peer and logger subsystems, and a **relay double-close race**. The cryptographic implementation is sound algorithmically but lacks key material zeroing, which is standard practice for VPN software. The coordinator API has an information disclosure vulnerability exposing the admin secret.
+However, the audit uncovered **critical authentication design flaws** (HMAC using public key as secret, timing oracle on auth key lookup), a **replay window bitmap bug** that undermines anti-replay protection, **path traversal** in the key store, several **high-severity race conditions** in the mesh peer and logger subsystems, and a **relay double-close race**. The cryptographic implementation is sound algorithmically but lacks key material zeroing, which is standard practice for VPN software. The coordinator API has an information disclosure vulnerability exposing the admin secret.
 
 Overall, this is a competent early-stage VPN implementation that needs targeted fixes before production deployment, particularly around the authentication scheme and concurrency safety.
 
@@ -126,6 +126,84 @@ func (l *Logger) log(level Level, msg string, args []interface{}) {
 **Problem**: `SetLevel`/`SetFormat` write to `Default.level`/`Default.format` without holding `Default.mu`. The `log()` method reads `l.level` without holding `mu` (the lock is only acquired later at line 117). This is a data race under concurrent use.
 
 **Recommendation**: Use `atomic.Int32` for level and format, or hold `mu` when reading/writing these fields.
+
+---
+
+### CRITICAL-6: Replay Window Bitmap Indexing Bug
+
+**Category**: Security / Cryptography
+**File**: `internal/crypto/replay.go:34-36, 58-60`
+**Impact**: Both false-positive replay rejections and false-negative replay acceptance
+
+**Current Code**:
+```go
+// Check (line 34-36):
+idx := (counter % WindowSize) / 64
+bit := counter % 64
+return w.bitmap[idx]&(1<<bit) == 0
+
+// Advance (line 58-60):
+idx := (counter % WindowSize) / 64
+bit := counter % 64
+w.bitmap[idx] |= 1 << bit
+```
+
+**Problem**: The bitmap uses `counter % WindowSize` for indexing, but after `slideBy()` shifts the bitmap contents, the mapping between counter values and bitmap positions becomes inconsistent. `slideBy` performs a linear shift of the bitmap array, but `Check`/`Advance` use modular arithmetic on the absolute counter value, which doesn't account for the shift.
+
+Example: floor=0, counter=64 is in bitmap[1]. After `slideBy(1)`, floor=1, but counter=64's bit was shifted from bitmap[1] to bitmap[0]. However, `Check(64)` still computes `idx = (64 % 2048) / 64 = 1`, looking at the wrong word. This means the replay window can both fail to detect replays (attacker can resend packets) and falsely reject legitimate packets.
+
+**Recommendation**: Use offset-based indexing relative to floor:
+```go
+offset := counter - w.floor
+idx := offset / 64
+bit := offset % 64
+```
+And change `slideBy` to zero only vacated slots without shifting.
+
+---
+
+### CRITICAL-7: Path Traversal in KeyStore Load/Delete
+
+**Category**: Security / Path Traversal
+**File**: `internal/auth/keys.go:82-83, 149-151`
+**Impact**: Arbitrary file read/delete on the filesystem
+
+**Current Code**:
+```go
+func (ks *KeyStore) Load(id string) (*PreAuthKey, error) {
+    path := filepath.Join(ks.dir, id+".json")
+
+func (ks *KeyStore) Delete(id string) error {
+    return os.Remove(filepath.Join(ks.dir, id+".json"))
+```
+
+**Problem**: The `id` parameter is not sanitized. An attacker controlling the `id` value can use path traversal (e.g., `../../etc/shadow`) to read or delete arbitrary files. While `filepath.Join` normalizes `..` components, it does not prevent them from escaping the intended directory.
+
+**Recommendation**: Validate that `id` contains only safe characters (alphanumeric, hyphens) and verify the resolved path stays under `ks.dir`:
+```go
+if !regexp.MustCompile(`^[a-zA-Z0-9-]+$`).MatchString(id) {
+    return nil, fmt.Errorf("invalid key ID")
+}
+```
+
+---
+
+### CRITICAL-8: Timing Side-Channel in Auth Key Secret Comparison
+
+**Category**: Security / Timing Attack
+**File**: `internal/auth/keys.go:116`
+**Impact**: Auth key secret can be recovered byte-by-byte via timing oracle
+
+**Current Code**:
+```go
+if k.Secret == secret {
+    return k, nil
+}
+```
+
+**Problem**: `FindBySecret` uses `==` for secret comparison, which is not constant-time. An attacker can probe secret values using timing measurements to determine which prefix matches, recovering the full key.
+
+**Recommendation**: Use `subtle.ConstantTimeCompare([]byte(k.Secret), []byte(secret)) == 1`.
 
 ---
 
@@ -414,7 +492,7 @@ No `.golangci.yml` found. The CI runs `golangci-lint` with default settings, whi
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| CRITICAL | 5     | Auth bypass, key zeroing, data races, info disclosure |
+| CRITICAL | 8     | Auth bypass, key zeroing, data races, info disclosure, replay window bug, path traversal, timing oracle |
 | HIGH     | 9     | Race conditions, missing TLS, DoS vectors, memory leaks |
 | MEDIUM   | 10    | Context misuse, protocol bugs, timing attacks, permissions |
 | LOW      | 7     | Code quality, style, tech debt |
@@ -429,6 +507,9 @@ No `.golangci.yml` found. The CI runs `golangci-lint` with default settings, whi
 3. **Add key material zeroing** to HandshakeState and Session (CRITICAL-3)
 4. **Fix peer field data races** with proper accessor methods (CRITICAL-4)
 5. **Fix logger level race** with atomic operations (CRITICAL-5)
+6. **Fix replay window bitmap indexing** — use offset-based indexing relative to floor (CRITICAL-6)
+7. **Sanitize KeyStore IDs** to prevent path traversal (CRITICAL-7)
+8. **Use constant-time comparison** for auth key secret lookup (CRITICAL-8)
 
 ### Phase 2: High-Priority Fixes (This Sprint)
 1. Fix relay server double-close race (HIGH-1)
@@ -459,7 +540,7 @@ No `.golangci.yml` found. The CI runs `golangci-lint` with default settings, whi
 | Metric | Score | Notes |
 |--------|-------|-------|
 | **Code Health** | 7/10 | Well-structured, good package boundaries, but god object in engine.go |
-| **Security** | 4/10 | Critical auth flaw, missing key zeroing, no TLS on relay |
+| **Security** | 3/10 | Critical auth flaw, replay window bug, path traversal, timing oracle, missing key zeroing, no TLS on relay |
 | **Concurrency Safety** | 5/10 | Multiple data races, missing WaitGroup, TOCTOU bugs |
 | **Maintainability** | 7/10 | Clean architecture, good test infrastructure, but large files |
 | **Test Coverage** | 7/10 | Good test structure with fuzz/bench tests, coverage tests exist |
