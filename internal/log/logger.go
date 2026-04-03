@@ -154,5 +154,14 @@ func Info(msg string, args ...interface{})  { Default.Info(msg, args...) }
 func Warn(msg string, args ...interface{})  { Default.Warn(msg, args...) }
 func Error(msg string, args ...interface{}) { Default.Error(msg, args...) }
 
-func SetLevel(level Level)    { Default.level = level }
-func SetFormat(format Format) { Default.format = format }
+func SetLevel(level Level) {
+	Default.mu.Lock()
+	Default.level = level
+	Default.mu.Unlock()
+}
+
+func SetFormat(format Format) {
+	Default.mu.Lock()
+	Default.format = format
+	Default.mu.Unlock()
+}

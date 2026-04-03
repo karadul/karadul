@@ -312,7 +312,11 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Allocate virtual IP.
-	nodeID := generateID()
+	nodeID, err := generateID()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	vip, err := a.pool.Allocate(nodeID)
 	if err != nil {
 		http.Error(w, "ip pool exhausted", http.StatusServiceUnavailable)
@@ -791,12 +795,12 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Write(data)
 }
 
-func generateID() string {
+func generateID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("karadul: crypto/rand.Read failed: " + err.Error())
+		return "", fmt.Errorf("generate ID: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // parseDERPAddr splits an address (e.g. ":8080" or "127.0.0.1:3340") into host and port.
