@@ -240,3 +240,148 @@ func TestTransportKeys_Incomplete(t *testing.T) {
 		t.Fatal("TransportKeys should fail before handshake is complete")
 	}
 }
+
+// TestTransportKeys_Responder verifies that the responder's TransportKeys
+// returns keys in the opposite order from the initiator's.
+func TestTransportKeys_Responder(t *testing.T) {
+	ikp, _ := GenerateKeyPair()
+	rkp, _ := GenerateKeyPair()
+
+	initiator, _ := InitiatorHandshake(ikp, rkp.Public)
+	responder, _ := ResponderHandshake(rkp)
+
+	msg1, _ := initiator.WriteMessage1()
+	_ = responder.ReadMessage1(msg1)
+	msg2, _ := responder.WriteMessage2()
+	_ = initiator.ReadMessage2(msg2)
+
+	iSend, iRecv, _ := initiator.TransportKeys()
+	rSend, rRecv, _ := responder.TransportKeys()
+
+	// Responder send == Initiator recv, Responder recv == Initiator send.
+	if rSend != iRecv {
+		t.Fatal("responder send key should equal initiator recv key")
+	}
+	if rRecv != iSend {
+		t.Fatal("responder recv key should equal initiator send key")
+	}
+}
+
+// TestReadMessage1_CorruptedEncryptedStatic verifies ReadMessage1 fails when
+// the encrypted static key section (bytes 32-80) is corrupted.
+func TestReadMessage1_CorruptedEncryptedStatic(t *testing.T) {
+	ikp, _ := GenerateKeyPair()
+	rkp, _ := GenerateKeyPair()
+
+	initiator, _ := InitiatorHandshake(ikp, rkp.Public)
+	responder, _ := ResponderHandshake(rkp)
+
+	msg1, _ := initiator.WriteMessage1()
+
+	// Corrupt a byte in the encrypted static key section (bytes 32-79).
+	msg1[40] ^= 0xFF
+
+	if err := responder.ReadMessage1(msg1); err == nil {
+		t.Fatal("ReadMessage1 should fail with corrupted encrypted static key")
+	}
+}
+
+// TestReadMessage1_CorruptedPayloadTag verifies ReadMessage1 fails when the
+// payload auth tag (bytes 80-95) is corrupted.
+func TestReadMessage1_CorruptedPayloadTag(t *testing.T) {
+	ikp, _ := GenerateKeyPair()
+	rkp, _ := GenerateKeyPair()
+
+	initiator, _ := InitiatorHandshake(ikp, rkp.Public)
+	responder, _ := ResponderHandshake(rkp)
+
+	msg1, _ := initiator.WriteMessage1()
+
+	// Corrupt the payload auth tag (bytes 80-95).
+	msg1[88] ^= 0xFF
+
+	if err := responder.ReadMessage1(msg1); err == nil {
+		t.Fatal("ReadMessage1 should fail with corrupted payload tag")
+	}
+}
+
+// TestReadMessage1_CorruptedEphemeralKey verifies ReadMessage1 fails when the
+// ephemeral public key (bytes 0-31) is corrupted, causing ECDH to derive wrong keys.
+func TestReadMessage1_CorruptedEphemeralKey(t *testing.T) {
+	ikp, _ := GenerateKeyPair()
+	rkp, _ := GenerateKeyPair()
+
+	initiator, _ := InitiatorHandshake(ikp, rkp.Public)
+	responder, _ := ResponderHandshake(rkp)
+
+	msg1, _ := initiator.WriteMessage1()
+
+	// Corrupt the ephemeral key (first 32 bytes).
+	msg1[0] ^= 0xFF
+
+	if err := responder.ReadMessage1(msg1); err == nil {
+		t.Fatal("ReadMessage1 should fail with corrupted ephemeral key")
+	}
+}
+
+// TestReadMessage2_CorruptedEphemeralKey verifies ReadMessage2 fails when the
+// ephemeral public key (bytes 0-31) is corrupted.
+func TestReadMessage2_CorruptedEphemeralKey(t *testing.T) {
+	ikp, _ := GenerateKeyPair()
+	rkp, _ := GenerateKeyPair()
+
+	initiator, _ := InitiatorHandshake(ikp, rkp.Public)
+	responder, _ := ResponderHandshake(rkp)
+
+	msg1, _ := initiator.WriteMessage1()
+	_ = responder.ReadMessage1(msg1)
+	msg2, _ := responder.WriteMessage2()
+
+	// Corrupt the ephemeral key in msg2.
+	msg2[0] ^= 0xFF
+
+	if err := initiator.ReadMessage2(msg2); err == nil {
+		t.Fatal("ReadMessage2 should fail with corrupted ephemeral key")
+	}
+}
+
+// TestTwoHandshakesProduceDifferentKeys verifies that two consecutive handshakes
+// between the same peers produce different transport keys (due to new ephemerals).
+func TestTwoHandshakesProduceDifferentKeys(t *testing.T) {
+	ikp, _ := GenerateKeyPair()
+	rkp, _ := GenerateKeyPair()
+
+	doHandshake := func() (iSend, iRecv [32]byte) {
+		initiator, _ := InitiatorHandshake(ikp, rkp.Public)
+		responder, _ := ResponderHandshake(rkp)
+		msg1, _ := initiator.WriteMessage1()
+		_ = responder.ReadMessage1(msg1)
+		msg2, _ := responder.WriteMessage2()
+		_ = initiator.ReadMessage2(msg2)
+		iSend, iRecv, _ = initiator.TransportKeys()
+		return
+	}
+
+	s1, r1 := doHandshake()
+	s2, r2 := doHandshake()
+
+	if s1 == s2 {
+		t.Error("two handshakes should produce different send keys")
+	}
+	if r1 == r2 {
+		t.Error("two handshakes should produce different recv keys")
+	}
+}
+
+// TestRemoteStaticKey_Initiator verifies that the initiator's RemoteStaticKey
+// returns the responder's public key that was passed to InitiatorHandshake.
+func TestRemoteStaticKey_Initiator(t *testing.T) {
+	ikp, _ := GenerateKeyPair()
+	rkp, _ := GenerateKeyPair()
+
+	initiator, _ := InitiatorHandshake(ikp, rkp.Public)
+	remote := initiator.RemoteStaticKey()
+	if remote != rkp.Public {
+		t.Error("initiator should have responder's static key")
+	}
+}

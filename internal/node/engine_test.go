@@ -2896,7 +2896,7 @@ func TestSendToPeer_DERPFallback(t *testing.T) {
 
 // TestSendToPeer_ExpiredSession verifies that sendToPeer drops the packet
 // when the session is expired and triggers a reconnect.
-func TestSendToPeer_ExpiredSession(t *testing.T) {
+func TestSendToPeer_CoverExpiredSession(t *testing.T) {
 	e := testEngine(t)
 
 	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})

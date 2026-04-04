@@ -698,34 +698,6 @@ func TestStore_GC_PersistsState(t *testing.T) {
 	}
 }
 
-// TestStore_GC_StartStop verifies StartGC/StopGC lifecycle.
-func TestStore_GC_StartStop(t *testing.T) {
-	dir := t.TempDir()
-	s, err := NewStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s.StartGC()
-
-	// StopGC should not block or panic.
-	done := make(chan struct{})
-	go func() {
-		s.StopGC()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// success
-	case <-time.After(5 * time.Second):
-		t.Fatal("StopGC blocked for too long")
-	}
-
-	// Double StopGC should be safe (nil check on gcStop).
-	s.StopGC()
-}
-
 // TestStore_GC_NoDirtySave verifies GC does not save when there is nothing to clean.
 func TestStore_GC_NoDirtySave(t *testing.T) {
 	dir := t.TempDir()
@@ -748,4 +720,131 @@ func TestStore_GC_NoDirtySave(t *testing.T) {
 	if s.Version() != verBefore {
 		t.Error("version should not change when GC has no work to do")
 	}
+}
+
+// TestStore_GC_SaveError verifies runGC handles saveLocked failure gracefully.
+func TestStore_GC_SaveError(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Save initial state so the store file exists.
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a stale node so runGC will mark dirty.
+	now := time.Now()
+	s.mu.Lock()
+	s.state.Nodes = []*Node{
+		{
+			ID: "stale-node", PublicKey: "pk1", Hostname: "stale",
+			Status: NodeStatusActive, LastSeen: now.Add(-2 * time.Hour),
+		},
+	}
+	s.mu.Unlock()
+
+	// Make the state file path unwritable by removing the directory.
+	s.mu.Lock()
+	oldPath := s.path
+	s.path = filepath.Join(dir, "nonexistent", "subdir", "state.json")
+	s.mu.Unlock()
+
+	// runGC should not panic even though saveLocked fails.
+	s.runGC()
+
+	// Restore path so StopGC/cleanup doesn't fail.
+	s.mu.Lock()
+	s.path = oldPath
+	s.mu.Unlock()
+}
+
+// TestStore_gcLoop_StartStop verifies gcLoop goroutine starts and stops cleanly.
+// We cannot wait for the 5-minute ticker in tests, so we verify the lifecycle
+// and rely on TestStore_GC_* tests for runGC correctness.
+func TestStore_gcLoop_StartStop(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start GC — should launch goroutine without blocking.
+	s.StartGC()
+
+	// StopGC should not block or panic.
+	done := make(chan struct{})
+	go func() {
+		s.StopGC()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopGC blocked for too long")
+	}
+
+	// Double StopGC should be safe (nil check on gcStop).
+	s.StopGC()
+
+	// Verify gcDone was properly closed — StartGC again should work.
+	s.StartGC()
+	s.StopGC()
+}
+
+// TestStore_gcLoop_TickerFires verifies that the gcLoop ticker fires and triggers
+// garbage collection when using a short test interval.
+func TestStore_gcLoop_TickerFires(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject a very short GC interval for testing.
+	shortInterval := 200 * time.Millisecond
+	testGCInterval.Store(&shortInterval)
+	defer func() {
+		d := gcInterval
+		testGCInterval.Store(&d)
+	}()
+
+	// Add a stale node that should be marked offline by GC.
+	now := time.Now()
+	s.mu.Lock()
+	s.state.Nodes = []*Node{
+		{
+			ID: "stale-ticker-node", PublicKey: "pk-ticker", Hostname: "stale-ticker",
+			Status: NodeStatusActive, LastSeen: now.Add(-31 * time.Minute),
+		},
+	}
+	s.mu.Unlock()
+
+	// Start GC — the ticker should fire within ~200ms and mark the node offline.
+	s.StartGC()
+
+	// Wait up to 2 seconds for GC to run.
+	deadline := time.After(2 * time.Second)
+	for {
+		n, ok := s.GetNode("stale-ticker-node")
+		if !ok {
+			t.Fatal("node should still exist (only marked offline, not deleted)")
+		}
+		if n.Status == NodeStatusDisabled {
+			// GC ran — success.
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("gcLoop ticker did not fire within 2 seconds — node was not marked offline")
+		default:
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	s.StopGC()
 }

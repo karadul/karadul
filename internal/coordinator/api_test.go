@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -2550,6 +2551,28 @@ func (m *mockHijacker) Close() {
 	}
 }
 
+// TestResponseWriter_Hijack_NonHijacker verifies that Hijack returns an error
+// when the underlying ResponseWriter does not implement http.Hijacker.
+func TestResponseWriter_Hijack_NonHijacker(t *testing.T) {
+	// httptest.NewRecorder does NOT implement http.Hijacker.
+	inner := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: inner, code: http.StatusOK}
+
+	conn, buf, err := rw.Hijack()
+	if err == nil {
+		t.Error("expected error when underlying ResponseWriter does not implement Hijacker")
+		if conn != nil {
+			conn.Close()
+		}
+	}
+	if conn != nil {
+		t.Error("expected nil conn")
+	}
+	if buf != nil {
+		t.Error("expected nil buf")
+	}
+}
+
 // ─── Topology endpoint tests ────────────────────────────────────────────────
 
 func TestHandleTopology_Empty(t *testing.T) {
@@ -2721,5 +2744,365 @@ func TestHandleAdminACL_ValidPortRange(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("want 200 for valid port range, got %d", resp.StatusCode)
+	}
+}
+
+// ─── Coverage gap tests: error paths in api.go ───────────────────────────────
+
+// TestUpdateEndpoint_InvalidEndpointFormat verifies that an endpoint string
+// failing net.SplitHostPort returns 400 (api.go line 420-425).
+func TestUpdateEndpoint_InvalidEndpointFormat(t *testing.T) {
+	api, ts := newTestAPI(t)
+	registerTestNode(t, api, ts, testPubKeyB64, "ep-fmt-node")
+
+	tests := []struct {
+		name     string
+		endpoint string
+		wantCode int
+	}{
+		{"no_colon", "just-a-string", http.StatusBadRequest},
+		{"too_many_colons", "1.2.3.4:5:6", http.StatusBadRequest},
+		// net.SplitHostPort succeeds for ":" and "1.2.3.4:" — these are valid.
+		{"empty_with_colon", ":", http.StatusOK},
+		{"missing_port", "1.2.3.4:", http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(UpdateEndpointRequest{Endpoint: tt.endpoint})
+			resp := signedDo(t, http.MethodPost, ts.URL+"/api/v1/update-endpoint", "/api/v1/update-endpoint", body)
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantCode {
+				t.Errorf("endpoint %q: want %d, got %d", tt.endpoint, tt.wantCode, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestUpdateEndpoint_StoreError verifies the store error path in
+// handleUpdateEndpoint (api.go line 432-435). We block the store's temp
+// file so UpdateNode's saveLocked fails.
+func TestUpdateEndpoint_StoreError(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "state.json")
+	store, err := NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := NewIPPool("100.64.0.0/10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	poller := NewPoller(store)
+	api := NewAPI(store, pool, poller, "auto", nil)
+
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	// Register a node while store is healthy.
+	ak, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak)
+	regBody, _ := json.Marshal(RegisterRequest{
+		PublicKey: testPubKeyB64,
+		Hostname:  "ep-store-node",
+		AuthKey:   ak.Key,
+	})
+	regResp, _ := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(regBody))
+	regResp.Body.Close()
+
+	// Block the store's temp file to cause saveLocked to fail.
+	tmpPath := storePath + ".tmp"
+	if err := os.MkdirAll(tmpPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(UpdateEndpointRequest{Endpoint: "1.2.3.4:5678"})
+	resp := signedDo(t, http.MethodPost, ts.URL+"/api/v1/update-endpoint", "/api/v1/update-endpoint", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("want 500 when store fails, got %d", resp.StatusCode)
+	}
+}
+
+// TestExchangeEndpoint_InvalidTargetPubKey_Table verifies that a non-32-byte
+// targetPubKey returns 400 (api.go line 687-690).
+func TestExchangeEndpoint_InvalidTargetPubKey_Table(t *testing.T) {
+	api, ts := newTestAPI(t)
+	registerTestNode(t, api, ts, testPubKeyB64, "ex-target-node")
+
+	tests := []struct {
+		name   string
+		pubKey string
+	}{
+		{"empty", ""},
+		{"too_short", "AAAA"},
+		{"not_base64", "!!!not-base64!!!"},
+		{"wrong_length", base64.StdEncoding.EncodeToString(make([]byte, 16))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(ExchangeEndpointRequest{
+				TargetPubKey: tt.pubKey,
+				MyEndpoint:   "1.2.3.4:4000",
+			})
+			resp := signedDo(t, http.MethodPost, ts.URL+"/api/v1/exchange-endpoint", "/api/v1/exchange-endpoint", body)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("targetPubKey %q: want 400, got %d", tt.pubKey, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestExchangeEndpoint_InvalidMyEndpoint verifies that an invalid myEndpoint
+// format returns 400 (api.go line 693-698).
+func TestExchangeEndpoint_InvalidMyEndpoint(t *testing.T) {
+	api, ts := newTestAPI(t)
+	registerTestNode(t, api, ts, testPubKeyB64, "ex-ep-node")
+
+	// Register a valid target so we get past the targetPubKey check.
+	const targetB64 = "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	ak, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak)
+	targetBody, _ := json.Marshal(RegisterRequest{
+		PublicKey: targetB64,
+		Hostname:  "target-node",
+		AuthKey:   ak.Key,
+	})
+	r, _ := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(targetBody))
+	r.Body.Close()
+
+	tests := []struct {
+		name       string
+		myEndpoint string
+		wantCode   int
+	}{
+		{"no_colon", "just-a-string", http.StatusBadRequest},
+		{"too_many_colons", "1.2.3.4:5:6", http.StatusBadRequest},
+		// net.SplitHostPort succeeds for ":" — valid.
+		{"empty_with_colon", ":", http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(ExchangeEndpointRequest{
+				TargetPubKey: targetB64,
+				MyEndpoint:   tt.myEndpoint,
+			})
+			resp := signedDo(t, http.MethodPost, ts.URL+"/api/v1/exchange-endpoint", "/api/v1/exchange-endpoint", body)
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantCode {
+				t.Errorf("myEndpoint %q: want %d, got %d", tt.myEndpoint, tt.wantCode, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestExchangeEndpoint_StoreUpdateCallerError verifies the store error path
+// when updating the caller's endpoint (api.go line 704-709). The handler
+// logs the error and continues, so we verify the response still succeeds
+// (target lookup) even though the caller update failed.
+func TestExchangeEndpoint_StoreUpdateCallerError(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "state.json")
+	store, err := NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := NewIPPool("100.64.0.0/10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	poller := NewPoller(store)
+	api := NewAPI(store, pool, poller, "auto", nil)
+
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	// Register caller (Alice) and target (Bob) while store is healthy.
+	const aliceB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	const bobB64 = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+	ak1, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak1)
+	aliceBody, _ := json.Marshal(RegisterRequest{
+		PublicKey: aliceB64,
+		Hostname:  "alice",
+		AuthKey:   ak1.Key,
+	})
+	ar, _ := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(aliceBody))
+	ar.Body.Close()
+
+	ak2, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak2)
+	bobBody, _ := json.Marshal(RegisterRequest{
+		PublicKey: bobB64,
+		Hostname:  "bob",
+		AuthKey:   ak2.Key,
+	})
+	br, _ := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(bobBody))
+	br.Body.Close()
+
+	// Block store writes to make UpdateNode fail.
+	tmpPath := storePath + ".tmp"
+	if err := os.MkdirAll(tmpPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice exchanges endpoint targeting Bob. The caller update fails silently
+	// (logged), but the handler continues and returns Bob's endpoint.
+	var alice [32]byte
+	body, _ := json.Marshal(ExchangeEndpointRequest{
+		TargetPubKey: bobB64,
+		MyEndpoint:   "10.0.0.1:4000",
+	})
+	sig := SignRequest(alice, http.MethodPost, "/api/v1/exchange-endpoint", body)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/exchange-endpoint", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Karadul-Key", aliceB64)
+	req.Header.Set("X-Karadul-Sig", sig)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Handler should still return 200 (target found) even though caller update failed.
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200 even when caller update fails, got %d", resp.StatusCode)
+	}
+
+	// Note: UpdateNode applies fn(n) in-memory before calling saveLocked(),
+	// so the endpoint IS updated in-memory even when persistence fails.
+	// This test verifies the handler still returns 200 (logs error, continues)
+	// despite the store persistence failure.
+}
+
+// TestExchangeEndpoint_EmptyMyEndpoint verifies that when myEndpoint is empty,
+// the caller's endpoint is not modified (api.go line 703: the if branch is skipped).
+func TestExchangeEndpoint_EmptyMyEndpoint(t *testing.T) {
+	api, ts := newTestAPI(t)
+
+	const aliceB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	const bobB64 = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+	// Register Alice with a pre-set endpoint.
+	registerTestNode(t, api, ts, aliceB64, "alice-endpoint-test")
+	aliceNode, _ := api.store.GetNodeByPubKey(aliceB64)
+	api.store.UpdateNode(aliceNode.ID, func(n *Node) {
+		n.Endpoint = "10.0.0.99:9999"
+	})
+
+	// Register Bob.
+	ak, _ := GenerateAuthKey(false, 0)
+	addAuthKey(t, api, ak)
+	bobBody, _ := json.Marshal(RegisterRequest{
+		PublicKey: bobB64,
+		Hostname:  "bob-endpoint-test",
+		AuthKey:   ak.Key,
+	})
+	r, _ := http.Post(ts.URL+"/api/v1/register", "application/json", bytes.NewReader(bobBody))
+	r.Body.Close()
+
+	// Alice exchanges with empty myEndpoint.
+	var alice [32]byte
+	body, _ := json.Marshal(ExchangeEndpointRequest{
+		TargetPubKey: bobB64,
+		MyEndpoint:   "",
+	})
+	sig := SignRequest(alice, http.MethodPost, "/api/v1/exchange-endpoint", body)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/exchange-endpoint", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Karadul-Key", aliceB64)
+	req.Header.Set("X-Karadul-Sig", sig)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+
+	// Alice's original endpoint should be preserved (not cleared).
+	aliceNode2, _ := api.store.GetNodeByPubKey(aliceB64)
+	if aliceNode2.Endpoint != "10.0.0.99:9999" {
+		t.Errorf("alice endpoint should be preserved, got %q", aliceNode2.Endpoint)
+	}
+}
+
+// errReader is an io.Reader that always returns an error.
+type errReader struct {
+	err error
+}
+
+func (r *errReader) Read(_ []byte) (int, error) { return 0, r.err }
+
+// TestPoll_ReadBodyError verifies handlePoll returns 400 when reading the
+// request body fails (api.go line 370-374).
+func TestPoll_ReadBodyError(t *testing.T) {
+	api, _ := newTestAPI(t)
+
+	readErr := fmt.Errorf("simulated read error")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/poll", &errReader{err: readErr})
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.handlePoll(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+// TestUpdateEndpoint_ReadBodyError verifies handleUpdateEndpoint returns 400
+// when reading the request body fails (api.go line 396-399).
+func TestUpdateEndpoint_ReadBodyError(t *testing.T) {
+	api, _ := newTestAPI(t)
+
+	readErr := fmt.Errorf("simulated read error")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/update-endpoint", &errReader{err: readErr})
+	w := httptest.NewRecorder()
+	api.handleUpdateEndpoint(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+// TestExchangeEndpoint_ReadBodyError verifies handleExchangeEndpoint returns
+// 400 when reading the request body fails (api.go line 671-674).
+func TestExchangeEndpoint_ReadBodyError(t *testing.T) {
+	api, _ := newTestAPI(t)
+
+	readErr := fmt.Errorf("simulated read error")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/exchange-endpoint", &errReader{err: readErr})
+	w := httptest.NewRecorder()
+	api.handleExchangeEndpoint(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+// TestGenerateID_Success verifies the happy path of generateID.
+func TestGenerateID_Success(t *testing.T) {
+	id, err := generateID()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(id) != 32 { // 16 bytes -> 32 hex chars
+		t.Errorf("want 32-char hex ID, got %d chars", len(id))
+	}
+}
+
+// TestGenerateID_Uniqueness verifies two generated IDs are different.
+func TestGenerateID_Uniqueness(t *testing.T) {
+	id1, _ := generateID()
+	id2, _ := generateID()
+	if id1 == id2 {
+		t.Error("two generated IDs should differ")
 	}
 }

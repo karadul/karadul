@@ -1184,3 +1184,184 @@ func (c *rwConn) RemoteAddr() net.Addr                    { return &net.TCPAddr{
 func (c *rwConn) SetDeadline(time.Time) error             { return nil }
 func (c *rwConn) SetReadDeadline(time.Time) error         { return nil }
 func (c *rwConn) SetWriteDeadline(time.Time) error        { return nil }
+
+// ─── Client: malformed RecvPacket (ParseRecvPacket error path) ────────────
+
+// TestConnect_MalformedRecvPacket verifies that connect() silently drops
+// RecvPacket frames with payloads shorter than 32 bytes (the public key size).
+// This exercises the err != nil branch at client.go:212-213.
+func TestConnect_MalformedRecvPacket(t *testing.T) {
+	// Create a mock server that sends a malformed RecvPacket after upgrade.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer conn.Close()
+
+		br := bufio.NewReader(conn)
+		bw := bufio.NewWriter(conn)
+
+		// Read HTTP upgrade request.
+		_, err = http.ReadRequest(br)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+
+		// Send 101 Switching Protocols.
+		fmt.Fprint(bw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: derp\r\nConnection: Upgrade\r\n\r\n")
+		bw.Flush()
+
+		// Read ClientInfo frame from the client.
+		frame, err := ReadFrame(br)
+		if err != nil {
+			serverErrCh <- fmt.Errorf("read client info: %w", err)
+			return
+		}
+		if frame.Type != FrameClientInfo {
+			serverErrCh <- fmt.Errorf("expected ClientInfo, got %d", frame.Type)
+			return
+		}
+
+		// Now send a malformed RecvPacket (payload < 32 bytes).
+		malformedPayload := []byte("short") // only 5 bytes, needs 32 for pubkey
+		if err := WriteFrame(bw, FrameRecvPacket, malformedPayload); err != nil {
+			serverErrCh <- fmt.Errorf("write malformed frame: %w", err)
+			return
+		}
+
+		// Then send a valid Ping so the client can verify it's still alive.
+		if err := WriteFrame(bw, FramePing, nil); err != nil {
+			serverErrCh <- fmt.Errorf("write ping: %w", err)
+			return
+		}
+		bw.Flush()
+
+		// Wait for the Pong response from the client.
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		pongFrame, err := ReadFrame(br)
+		if err != nil {
+			serverErrCh <- fmt.Errorf("read pong: %w", err)
+			return
+		}
+		if pongFrame.Type != FramePong {
+			serverErrCh <- fmt.Errorf("expected Pong, got %d", pongFrame.Type)
+			return
+		}
+
+		close(serverErrCh) // success
+	}()
+
+	log := klog.New(nil, klog.LevelError, klog.FormatText)
+	var pubKey [32]byte
+	pubKey[0] = 0xB1
+
+	recvCalled := false
+	recvFunc := func(src [32]byte, payload []byte) {
+		recvCalled = true
+	}
+
+	c := NewClient("http://"+ln.Addr().String(), pubKey, recvFunc, log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = c.connect(ctx)
+	// connect should eventually return an error (read timeout after the server closes).
+	if err != nil {
+		t.Logf("connect returned: %v", err)
+	}
+
+	// The malformed RecvPacket should NOT have triggered the recvFunc.
+	if recvCalled {
+		t.Error("recvFunc should not have been called for malformed RecvPacket")
+	}
+
+	// Verify server side succeeded.
+	if err := <-serverErrCh; err != nil {
+		t.Errorf("server error: %v", err)
+	}
+}
+
+// ─── Client: write goroutine SendPacket error ────────────────────────────
+
+// TestConnect_WriteGoroutineSendError verifies that the write goroutine in
+// connect() handles WriteFrame errors when sending a SendPacket.
+// This exercises lines 176-184 in client.go.
+func TestConnect_WriteGoroutineSendError(t *testing.T) {
+	// Create a server that accepts the connection then immediately closes its
+	// write side, so the client's write goroutine gets an error on SendPacket.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		br := bufio.NewReader(conn)
+		bw := bufio.NewWriter(conn)
+
+		// Read HTTP upgrade request.
+		http.ReadRequest(br)
+
+		// Send 101 Switching Protocols.
+		fmt.Fprint(bw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: derp\r\nConnection: Upgrade\r\n\r\n")
+		bw.Flush()
+
+		// Read ClientInfo frame.
+		ReadFrame(br)
+
+		// Wait a bit for the client to start, then close to force write errors.
+		time.Sleep(200 * time.Millisecond)
+		conn.Close()
+	}()
+
+	log := klog.New(nil, klog.LevelError, klog.FormatText)
+	var pubKey [32]byte
+	pubKey[0] = 0xC1
+
+	c := NewClient("http://"+ln.Addr().String(), pubKey, nil, log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	connectDone := make(chan error, 1)
+	go func() {
+		connectDone <- c.connect(ctx)
+	}()
+
+	// Wait for connection to establish.
+	time.Sleep(300 * time.Millisecond)
+
+	// Send a packet — the write goroutine will try to write but the server
+	// has closed its side, so the write should fail.
+	var dst [32]byte
+	dst[0] = 0xD1
+	c.SendPacket(dst, []byte("test"))
+
+	select {
+	case err := <-connectDone:
+		if err == nil {
+			t.Log("connect returned nil (context cancelled before read error)")
+		} else {
+			t.Logf("connect returned error (expected): %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("connect did not return within timeout")
+	}
+}

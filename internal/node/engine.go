@@ -55,6 +55,15 @@ const (
 	rekeyCheckInterval   = 30 * time.Second // how often to scan for sessions needing rekey
 )
 
+// Test-only interval overrides. When non-nil, the corresponding loop uses
+// these values instead of the production constants.
+var (
+	testKeepaliveInterval    atomic.Pointer[time.Duration]
+	testDerpUpgradeEvery     atomic.Pointer[time.Duration]
+	testRekeyCheckInterval   atomic.Pointer[time.Duration]
+	testEndpointRefreshEvery atomic.Pointer[time.Duration]
+)
+
 // peerSession holds the transport state for one established peer channel.
 type peerSession struct {
 	peer       *mesh.Peer
@@ -387,7 +396,11 @@ func (e *Engine) reportEndpoint(ctx context.Context, endpoint string) error {
 
 // endpointRefreshLoop re-discovers our public endpoint periodically.
 func (e *Engine) endpointRefreshLoop(ctx context.Context) {
-	ticker := time.NewTicker(endpointRefreshEvery)
+	d := endpointRefreshEvery
+	if v := testEndpointRefreshEvery.Load(); v != nil {
+		d = *v
+	}
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	for {
 		select {
@@ -549,7 +562,11 @@ func (e *Engine) onDERPRecv(src [32]byte, payload []byte) {
 
 // derpUpgradeLoop periodically tries to upgrade DERP sessions to direct.
 func (e *Engine) derpUpgradeLoop(ctx context.Context) {
-	ticker := time.NewTicker(derpUpgradeEvery)
+	d := derpUpgradeEvery
+	if v := testDerpUpgradeEvery.Load(); v != nil {
+		d = *v
+	}
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	for {
 		select {
@@ -584,7 +601,11 @@ func (e *Engine) tryUpgradeToDirect() {
 // ─── Keepalive ────────────────────────────────────────────────────────────────
 
 func (e *Engine) keepaliveLoop(ctx context.Context) {
-	ticker := time.NewTicker(keepaliveInterval)
+	d := keepaliveInterval
+	if v := testKeepaliveInterval.Load(); v != nil {
+		d = *v
+	}
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	for {
 		select {
@@ -1230,7 +1251,11 @@ func (e *Engine) handleAPIShutdown(w http.ResponseWriter, r *http.Request) {
 // rekeyLoop periodically checks each established session and triggers a new
 // handshake whenever the session approaches its 2-minute lifetime.
 func (e *Engine) rekeyLoop(ctx context.Context) {
-	ticker := time.NewTicker(rekeyCheckInterval)
+	d := rekeyCheckInterval
+	if v := testRekeyCheckInterval.Load(); v != nil {
+		d = *v
+	}
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	for {
 		select {

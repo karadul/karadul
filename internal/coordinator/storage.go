@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -389,6 +390,14 @@ const (
 	gcKeyExpireAge    = 24 * time.Hour   // delete expired non-ephemeral keys after 24 h
 )
 
+// testGCInterval overrides gcInterval for tests. When non-nil, gcLoop uses this value.
+var testGCInterval atomic.Pointer[time.Duration]
+
+func init() {
+	d := gcInterval
+	testGCInterval.Store(&d)
+}
+
 // StartGC begins the background garbage-collection loop.
 func (s *Store) StartGC() {
 	s.gcDone = make(chan struct{})
@@ -409,7 +418,11 @@ func (s *Store) StopGC() {
 
 func (s *Store) gcLoop() {
 	defer close(s.gcDone)
-	ticker := time.NewTicker(gcInterval)
+	d := gcInterval
+	if v := testGCInterval.Load(); v != nil {
+		d = *v
+	}
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	for {
 		select {

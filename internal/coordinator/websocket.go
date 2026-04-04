@@ -8,10 +8,14 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// testWritePumpPingEvery overrides the writePump ping ticker interval for tests.
+var testWritePumpPingEvery atomic.Pointer[time.Duration]
 
 // Hub manages WebSocket connections and broadcasts messages
 type Hub struct {
@@ -460,7 +464,11 @@ func (c *Client) readPump() {
 
 // writePump pumps messages from the hub to the WebSocket connection
 func (c *Client) writePump() {
-	ticker := time.NewTicker(54 * time.Second)
+	pingEvery := 54 * time.Second
+	if v := testWritePumpPingEvery.Load(); v != nil {
+		pingEvery = *v
+	}
+	ticker := time.NewTicker(pingEvery)
 	defer func() {
 		ticker.Stop()
 		c.conn.Close()

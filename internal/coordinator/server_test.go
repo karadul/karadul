@@ -590,3 +590,68 @@ func TestServer_TlsConfig_InvalidKeyFile(t *testing.T) {
 		t.Fatal("expected error for non-existent key file")
 	}
 }
+
+// TestServer_Start_WebHandler verifies that Start registers a non-nil webHandler,
+// covering the "if webHandler != nil { mux.Handle("/", webHandler) }" path in server.go.
+func TestServer_Start_WebHandler(t *testing.T) {
+	// Allocate a free port by listening and closing.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	dir := t.TempDir()
+	cfg := &config.ServerConfig{
+		Addr:         addr,
+		Subnet:       "100.64.0.0/10",
+		DataDir:      dir,
+		ApprovalMode: "auto",
+	}
+	log := klog.New(nil, klog.LevelError, klog.FormatText)
+	srv, err := NewServer(cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a custom handler that responds with a known body.
+	webHandler := http.NewServeMux()
+	webHandler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("webhandler-ok"))
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx, webHandler) }()
+
+	// Give server time to start.
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify the web handler is reachable via a non-API path.
+	resp, err := http.Get("http://" + addr + "/some-page")
+	if err == nil {
+		body := make([]byte, 64)
+		n, _ := resp.Body.Read(body)
+		resp.Body.Close()
+		if string(body[:n]) != "webhandler-ok" {
+			t.Errorf("web handler body: got %q, want %q", string(body[:n]), "webhandler-ok")
+		}
+	} else {
+		t.Logf("could not reach web handler (server may not have started yet): %v", err)
+	}
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Start returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("server did not stop after context cancel")
+	}
+}
