@@ -34,7 +34,7 @@
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^6.26.0",
+    "react-router-dom": "^7.13.2",
     "recharts": "^2.13.0",
     "sonner": "^1.5.0",
     "tailwind-merge": "^2.5.0",
