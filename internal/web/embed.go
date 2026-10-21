@@ -4,7 +4,6 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
-	"path/filepath"
 	"strings"
 )
 
@@ -35,8 +34,8 @@ func Handler() (http.Handler, error) {
 			path = "/index.html"
 		}
 
-		// Try to open the file
-		_, err := fsys.Open(filepath.Clean(path))
+		// Try to open the file (strip leading slash for embed FS compatibility)
+		_, err := fsys.Open(strings.TrimPrefix(path, "/"))
 		if err != nil {
 			// File not found, serve index.html for SPA routing
 			r.URL.Path = "/"
