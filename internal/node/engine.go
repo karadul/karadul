@@ -753,18 +753,18 @@ func (e *Engine) sendToPeer(peer *mesh.Peer, packet []byte) error {
 		Ciphertext:    ct,
 	}).MarshalBinary()
 
-	// Prefer direct UDP; fall back to DERP.
+	// Prefer direct UDP; also send via DERP as fallback (dual-send for symmetric NAT).
 	ep := ps.endpoint.Load()
 	if ep == nil {
 		ep = peer.GetEndpoint()
 	}
+	sentDirect := false
 	if ep != nil {
-		_, err = e.udp.WriteToUDP(wireMsg, ep)
-		if err == nil {
+		if _, err := e.udp.WriteToUDP(wireMsg, ep); err == nil {
+			sentDirect = true
 			e.metricPacketsTx.Add(1)
 			e.metricBytesTx.Add(uint64(len(packet)))
 		}
-		return err
 	}
 
 	e.derpMu.Lock()
@@ -774,6 +774,9 @@ func (e *Engine) sendToPeer(peer *mesh.Peer, packet []byte) error {
 		dc.SendPacket(peer.PublicKey, wireMsg)
 		e.metricPacketsTx.Add(1)
 		e.metricBytesTx.Add(uint64(len(packet)))
+		return nil
+	}
+	if sentDirect {
 		return nil
 	}
 	return fmt.Errorf("no path to peer %s (no endpoint, no DERP)", peer.Hostname)
@@ -822,17 +825,22 @@ func (e *Engine) initiateHandshake(peer *mesh.Peer) error {
 
 	wire := init.MarshalBinary()
 	ep := peer.GetEndpoint()
+	sentDirect := false
 	if ep != nil {
-		_, err = e.udp.WriteToUDP(wire, ep)
-		return err
+		if _, err := e.udp.WriteToUDP(wire, ep); err == nil {
+			sentDirect = true
+		}
 	}
 
-	// Send via DERP if no direct endpoint.
+	// Also send via DERP as a fallback (dual-send for symmetric NAT).
 	e.derpMu.Lock()
 	dc := e.derpClient
 	e.derpMu.Unlock()
 	if dc != nil {
 		dc.SendPacket(peer.PublicKey, wire)
+		return nil
+	}
+	if sentDirect {
 		return nil
 	}
 	return fmt.Errorf("no path to peer %s for handshake", peer.Hostname)
